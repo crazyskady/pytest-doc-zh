@@ -1,0 +1,181 @@
+# Chapter 4 在测试用例中编写和上报断言
+
+## 4.1 使用断言语句
+
+**pytest**允许你在测试用例中使用标准的python断言。如下：
+```
+# test_assert1.py中的内容
+def f():
+    return 3
+
+def test_function():
+    assert f() == 4
+```
+本例中的函数期望返回一个固定的值。如果该断言失败了，你会看到该函数的返回值：
+```
+$ pytest test_assert1.py 
+============================= test session starts ==============================
+platform darwin -- Python 3.7.2, pytest-4.2.1, py-1.7.0, pluggy-0.8.1
+rootdir: /Users/david/Downloads/myPython/translate, inifile:
+collected 1 item                                                               
+
+test_assert1.py F                                                        [100%]
+
+=================================== FAILURES ===================================
+________________________________ test_function _________________________________
+
+    def test_function():
+>       assert f() == 4
+E       assert 3 == 4
+E        +  where 3 = f()
+
+test_assert1.py:5: AssertionError
+=========================== 1 failed in 0.07 seconds ===========================
+```
+pytest支持显示常见的子表达式的值，包括调用，属性，比较以及二元和一元运算符。(参看[Demo of Python failure reports with purest](ToBeAdded) 这允许你使用你习惯的python的在不丢失内省信息的情况下构造代码。（什么是内省信息？更详细的内部输出信息？）
+如果你为断言指定了输出信息，那么不会输出任何内省信息，而是在traceback中直接输出指定的信息：
+```
+assert a % 2 ==0, "value was odd, should be even"
+```
+更多断言内省信息请参考[Advanced assertion introspection](ToBeAdded)
+
+## 4.2 异常的断言
+你可以在上下文中使用pytest.raises来对异常产生断言：
+```
+ import pytest
+ 
+ def test_zero_division():
+    with pytest.raise(ZeroDivisionError):
+        1 / 0
+```
+如果你还需要访问异常的确切信息，你需要使用下面的方式：
+```
+def test_recursion_depth():
+    with pytest.raises(RuntimeError) as excinfo:
+        def f():
+            f()
+        f()
+    assert 'Maximum recursion' in str(excinfo.value)
+```
+excinfo是ExceptionInfo的一个实例，里面包含了异常的详细信息，主要属性是.type, .value以及.traceback.
+你可以通过**match**参数来使用正则表达式来匹配一个异常是否发生：
+```
+import pytest
+def myfunc():
+    raise ValueError("Exception 123 raised")
+    
+def test_match():
+    with pytest.raises(ValueError, match=r'.* 123 .*'):
+        myfunc()
+```
+参数**match**与re.search行为是一致的，所以上面的match='123'能够正确的匹配到myfunc抛出的异常。
+pytest.raises的另一种使用方法是传递一个函数给它，该函数使用给定的参数，并且最终判断该函数是否产生了期望的断言：
+```
+pytest.raises(ExpectedException, func, *args, **kwargs)
+```
+测试报告会提供你一些帮助信息，比如是没有异常还是抛出了错误的异常。
+
+注意也可以在pytest.mark.xfail中使用raises来检查测试用例是否是因为抛出了异常而失败：
+```
+@pytest.mark.xfail(raises=IndexError)
+def test_f():
+    f()
+```
+使用pytest.raises更适合测试自己的代码故意引发的异常。
+而使用@pytest.mark.xfail和检查函数更适合那些记录的未修复的bug(也就是那些应该发生的异常)或者依赖项中的异常。 （这两个场景在测试过程中是不一样的）
+
+## 4.3 告警的断言
+2.8 引入
+你可以通过**pytest.warns**来判断是否产生了特定的告警。
+
+## 4.4 上下文比较
+2.0 引入
+pytest支持在进行比较时提供上下文的相关敏感信息：
+```
+# test_assert2.py
+def test_set_comparison():
+    set1 = set("1308")
+    set2 = set("8035")
+    assert set1 == set2
+```
+运行如下：
+```
+$ pytest test_assert2.py 
+============================= test session starts ==============================
+platform darwin -- Python 3.7.2, pytest-4.2.1, py-1.7.0, pluggy-0.8.1
+rootdir: /Users/david/Downloads/myPython/translate, inifile:
+collected 1 item                                                               
+
+test_assert2.py F                                                        [100%]
+
+=================================== FAILURES ===================================
+_____________________________ test_set_comparison ______________________________
+
+    def test_set_comparison():
+        set1 = set("1308")
+        set2 = set("8035")
+>       assert set1 == set2
+E       AssertionError: assert {'0', '1', '3', '8'} == {'0', '3', '5', '8'}
+E         Extra items in the left set:
+E         '1'
+E         Extra items in the right set:
+E         '5'
+E         Use -v to get the full diff
+
+test_assert2.py:4: AssertionError
+=========================== 1 failed in 0.07 seconds ===========================
+```
+
+## 4.5 为断言增加注释
+你可以通过实现钩子函数pytest_assertrepr_compare来为断言增加自己的描述：
+```
+pytest_assertrepr_compare(config, op, left, right)
+```
+该钩子返回失败的断言中的注释。
+如果没有自定义注释，返回None，否则返回一个字符串列表。列表中的字符串使用换行符来连接，同时字符串中的所有换行符都会被转义。
+注意，除了第一行以外，其他所有行都会进行缩进，目的是将第一行作为摘要。
+```
+Parameters config(_pytest.config.Config) - pytest config object
+```
+下面的示例在conftest.py中实现了该钩子函数，改变了Foo的对象的注释：
+```
+# conftest.py
+from test_foocompare import Foo
+def pytest_assertrepr_compare(op, left, right):
+    if isinstance(left, Foo) and isinstance(right, Foo) and op == "==":
+        return ['Comparing Foo instance:', ' vals: %s != %s' % (left.val, right.val)]
+```
+定义测试对象：
+```
+# test_foocompare.py
+class Foo(object):
+    def __init__(self, val):
+        self.val = val
+    def __eq__(self, other):
+        return self.val == other.val
+        
+def test_compare():
+    f1 = Foo(1)
+    f2 = Foo(2)
+    assert f1 == f2
+```
+运行这个测试，可以在测试结果中看到自定义的注释：
+```
+$ pytest -q test_foocompare.py
+F [100%]
+================================= FAILURES =================================
+_______________________________ test_compare _______________________________
+def test_compare():
+f1 = Foo(1)
+f2 = Foo(2)
+> assert f1 == f2
+E assert Comparing Foo instances:
+E vals: 1 != 2
+test_foocompare.py:11: AssertionError
+1 failed in 0.12 seconds
+```
+## 4.6 高级断言内省
+偷懒没翻。。。
+
+
+
