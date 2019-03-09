@@ -1,0 +1,78 @@
+# chapter 6 编写带属性的测试函数
+
+使用pytest.mark可以帮助你在测试函数中设置元数据。以下是一些内置的markers：
+* skip - 跳过该测试函数
+* skipif - 当满足条件时跳过该测试函数
+* xfail - 当特定条件满足时，标记该用例为预期就是失败的测试
+* parametrize 来对同一个测试函数进行多次调用
+实现一个自定义的makers用于测试在pytest中非常简单。参考已经文档化的[Working with custom markers](ToBeAdded)
+***
+注意：markers只对测试用例生效，对fixtures函数不生效
+***
+
+## 6.1 使用--strict严格检查未知的marks
+当使用--strict的命令行参数时，所有未在pytest.ini中注册的mark都会触发一个错误。
+Marks的注册方法如下：
+```
+[pytest]
+markers = 
+    slow
+    serial
+```
+这可以防止用户偶然的输入错误。 测试套要激活这个检查需要在addopts中添加--strict
+```
+[pytest]
+addopts = --strict
+markers = 
+    slow
+    serial
+```
+
+## 6.2 Marker的更新和迭代
+3.6更新
+
+pytest在以前实现marker的时候，仅仅是简单的借更新函数的__dict__属性来实现累积makers。因此，markers会神奇的沿着class继承来进行传递。此外，markers的检索的API还不一致，因为参数化的markers的存储方式与@pytest.mark及node.add_marker不一样。
+这种状态使得如果不了解marker的内部实现的话很难正确的使用markers，从而导致在高级用法中出现一些微妙的且难以理解的错误。
+根据marker的声明/更改的方式，可能会获取到：兄弟类的markers的MarkerInfo，参数化中或调用node.add_marker生成的MarkDecorators，或者先前已经废弃的marks。另外，MarkerInfo就像一个标记，实际上它表示多个具有相同名称的marks的合集。
+除此之外，在modules，classes和functions/methods中对markers的访问方式也不同。事实上，即使在classes/modules中声明的marker，也只能在functions中来访问。
+
+在pytest 3.6中使用了一个新的API来解决上面所描述的设计问题。提供了_pytest.nodes.Node.iter_markers()来解决了前面设计中的各种问题。（这边看着就晕）
+
+### 6.2.1 更新代码
+不再建议使用旧的API Node.get_marker(name)，因为该API返回了一个内部对象MarkerInfo，该内部对象包含了该节点所有markers的参数信息。
+一般情况下需要考虑如下两种使用markers的场景：
+1. Marks的相互覆盖
+这种场景下，marks的顺序很重要，不能将mark当作一个独立的对象来考虑。比如：
+module级别的log_level('info')在特定测试中可以被log_level('debug')覆盖。
+下面的示例中，使用了Node.get_closest_marker(name) (你倒是说明下这个函数有啥用撒。。。。)：
+```
+# replace this：
+marker = item.get_marker("log_level")
+if marker:
+    level = marker.args[0]
+    
+# by this:
+marker = item.get_closest_marker("log_level")
+if marker:
+    level = marker.args[0]
+```
+
+2. 额外附加的Marks
+比如：skipif(条件)的mark表示只是想对这些测试用例做一个评估，但是不关心他们的执行顺序，这种情况下你可以把marks看作是一个集合。
+下面的例子每个迭代的mark都是独立的处理他们的参数的：
+```
+# replace this
+skipif = item.get_marker("skipif")
+if skipif:
+    for condition in skipif.args:
+        # 确认condition是否满足条件
+        
+# by this
+for skipif in item.iter_markers("skipif"):
+    condition = skipif.args[0]
+    # 确认condition是否满足条件
+```
+
+### 6.2.2 相关的已知问题
+略
+
