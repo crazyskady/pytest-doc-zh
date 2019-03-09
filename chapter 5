@@ -1,0 +1,854 @@
+# Chapter 5 pytest fixture:直接，模块化，易扩展(总之就是Niublity)
+
+2.0/2,3/2.4有更新
+测试fixture的目的是提供一个测试的基线，在此基线基础上，可以更可靠的进行重复测试。Pytest的fixture相对于传统的xUnit的setup/teardown函数做了显著的改进:
+* 测试fixture有明确的名称，通过在函数/模块/类或者整个项目中激活来使用
+* 测试fixture是模块化的实现，使用fixture名即可触发特定的fixture，fixture可以在其他fixture中进行使用
+* 测试fixture不仅可以进行简单的单元测试，也可以进行复杂的功能测试。可以根据配置和组件的选项进行参数化定制测试，或者跨函数/类/模块或者整个测试过程进行测试。
+此外，pytest依然支持经典的xUnit的样式，你可以根据自己的喜好混合两种样式，甚至可以基于现有的unittest.TestCase或者nose的样式来开发。
+
+## 5.1 作为函数入参的fixture
+测试函数可以通过接受一个已经命名的fixture对象来使用他们。对于每个参数名，如果fixture已经声明定义，会自动创建一个实例并传入该测试函数。fixture函数通过装饰器标志@pytest.fixture来注册。下面是一个简单的独立的测试模块，包含一个fixture及使用它的测试函数：
+```
+# ./test_smtpsimple.py
+import pytest
+
+@pytest.fixture
+def smtp_connection():
+    import smtplib
+    return smtplib.SMTP("smtp.gmail.com", 587, timeout=5)
+
+def test_ehlo(smtp_connection):
+    response, msg = smtp_connection.ehlo()
+    assert response == 250
+    assert 0 # 用于调试
+```
+这里，test_ehlo需要smtp_connection这个fixture的返回。pytest会在@pytest.fixture的fixture中查找并调用名为smtp_connection的fixture。运行这个测试结果如下：
+```
+$ pytest test_smtpsimple.py
+=========================== test session starts ============================
+platform linux -- Python 3.x.y, pytest-4.x.y, py-1.x.y, pluggy-0.x.y
+cachedir: $PYTHON_PREFIX/.pytest_cache
+rootdir: $REGENDOC_TMPDIR, inifile:
+collected 1 item
+test_smtpsimple.py F [100%]
+================================= FAILURES =================================
+________________________________ test_ehlo _________________________________
+smtp_connection = <smtplib.SMTP object at 0xdeadbeef>
+def test_ehlo(smtp_connection):
+response, msg = smtp_connection.ehlo()
+assert response == 250
+> assert 0 # for demo purposes
+E assert 0
+test_smtpsimple.py:11: AssertionError
+========================= 1 failed in 0.12 seconds =========================
+```
+测试的回显中可以看出测试函数调用了smtp_connection,这是由fixture函数创建的smtplib.SMTP()的一个实例。该函数在我们故意添加的assert 0处失败。以下是pytest的在调用该函数的时候的详细规则：
+1. pytest找到以test_作为前缀的测试用例test_ehlo。该测试函数有一个名为smtp_connection的入参。而在fixture函数中存在一个名为smtp_connection的fixture。
+2. smtp_connection()被调用来创建一个实例。
+3. test_ehlo(<smtp_connection实例>)被调用并在最后一行因为断言失败。
+注意，如果拼错了函数参数，或者使用了一个不可用的参数，你会看到一个包含可用函数参数列表的错误信息。
+***
+注意：你可以使用
+`pytest --fixtures test_simplefactory.py`
+来查看可用的fixture(如果想查看以_开头的fixture，请添加-v参数)
+***
+## 5.2 fixture：依赖注入的最佳实践
+pytest的fixture允许测试函数轻松的接收和处理应用层对象的预处理，而不必关心import/setup/cleanup这些细节。 这是依赖注入的的一个极佳的示范，fixture函数是注入器，而测试函数是fixture的使用者。
+
+## 5.3 conftest.py: 共享fixture函数
+实现测试用例的过程中，当你发现需要使用来自多个文件的fixture函数的时候，可以将这些fixture函数放到conftest.py中。
+你不需要导入这些fixture函数，它会由pytest自动检索。
+fixture函数的检索顺序是从测试类开始，然后测试的模块，然后就是conftest.py文件，最后是内置的插件和第三方插件。
+你还可以使用conftest.py来为本地每个目录实现插件。
+
+## 5.4 共享测试数据
+如果你要在测试中通过文件来使用测试数据，一个好的方式是通过fixture来加载这些数据后使用，这样就可以利用了pytest的自动缓存的机制。另一个好的方式是将这些数据文件添加到测试文件夹中，这样可以用插件来管理这些测试数据，不如：pytest-datadir和pytest-datafiles.
+
+## 5.5 scope：在类/模块/整个测试中共享fixture实例
+当fixture需要访问网络时，因为依赖于网络状况，通常是一个非常耗时的动作。
+扩展下上面的示例，我们可以将scope="module"参数添加到@pytest.fixture中，这样每个测试模块就只会调用一次smtp_connection的fixture函数(默认情况下时每个测试函数都调用一次)。因此，一个测试模块中的多个测试函数将使用同样的smtp_connection实例，从而节省了反复创建的时间。
+scope可能的值为：function, class, module, package 和 session。
+
+下面的示例将fixture函数放在独立的conftest.py中，这样可以在多个测试模块中访问使用该测试fixture：
+```
+# conftest.py
+import pytest
+import smtplib
+
+@pytest.fixture(scope="module")
+def smtp_connection():
+    return smtplib.SMTP("smtp.gmail.com", 587, timeout=5)
+```
+fixture的名称依然为smtp_connection,你可以在任意的测试用例中通过该名称来调用该fixture(在conftest.py所在的目录及子目录下)。
+```
+# test_module.py
+
+def test_ehlo(smtp_connection):
+    response, msg = smtp_connection.ehlo()
+    assert response == 250
+    assert b"smtp.gmail.com" in msg
+    assert 0 # for debug
+
+def test_noop(smtp_connection):
+    response, msg = smtp_connection.noop()
+    assert response == 250
+    assert 0 # for debug
+```
+我们故意添加了assert 0的断言来查看测试用例的运行情况：
+```
+$ pytest test_module.py
+=========================== test session starts ============================
+platform linux -- Python 3.x.y, pytest-4.x.y, py-1.x.y, pluggy-0.x.y
+cachedir: $PYTHON_PREFIX/.pytest_cache
+rootdir: $REGENDOC_TMPDIR, inifile:
+collected 2 items
+test_module.py FF [100%]
+================================= FAILURES =================================
+________________________________ test_ehlo _________________________________
+smtp_connection = <smtplib.SMTP object at 0xdeadbeef>
+def test_ehlo(smtp_connection):
+response, msg = smtp_connection.ehlo()
+assert response == 250
+assert b"smtp.gmail.com" in msg
+> assert 0 # for demo purposes
+E assert 0
+test_module.py:6: AssertionError
+________________________________ test_noop _________________________________
+smtp_connection = <smtplib.SMTP object at 0xdeadbeef>
+def test_noop(smtp_connection):
+response, msg = smtp_connection.noop()
+assert response == 250
+> assert 0 # for demo purposes
+E assert 0
+test_module.py:11: AssertionError
+========================= 2 failed in 0.12 seconds =========================
+```
+可以看到这两个用例都失败了，并且你可以在traceback中看到smtp_connection被传进了这两个测试函数中。这两个函数复用了同一个smtp_connection实例。
+
+如果你需要一个session作用域的smtp_connection实例，你可以按照如下来定义：
+```
+@pytest.fixture(scope="session")
+def smtp_connection():
+    #该固件会在所有的用例中共享
+```
+scope定义为class的话会创建一个在每个class中调用一次的fixture。
+***
+**注意：** Pytest对于每个fixture只会缓存一个实例，这意味着如果使用参数化的fixture，pytest可能会比定义的作用域更多次的调用fixture函数（因为需要创建不同参数的fixture）
+***
+### 5.5.1 package scope(实验阶段)
+既然实验阶段，那就不翻了。。。囧~~~
+
+## 5.6 scope越大，实例化越早
+3.5 引入
+当函数调用多个fixtures的时候，scope较大的(比如session)实例化早于scope较小的(比如function或者class)。同样scope的顺序则按照其在测试函数中定义的顺序及依赖关系来实例化。
+考虑如下代码：
+```
+@pytest.fixture(scope="session")
+def s1():
+    pass
+
+@pytest.fixture(scope="module")
+def m1():
+    pass
+
+@pytest.fixture
+def f1(tmpdir):
+    pass
+
+@pytest.fixture
+def f2():
+    pass
+
+def test_foo(f1, m1, f2, s1):
+    ...
+```
+该函数所请求的fixtures的实例化顺序如下：
+1. s1: 具有最大的scope(session)
+2. m1: 第二高的scope(module)
+3. tmpdir: f1需要使用该fixture，需要在f1之前实例化
+4. f1：在function级的scope的fixtures中，在test_foo中处于第一个
+5. f2：在function级的scope的fixtures中，在test_foo中处于最后一个
+
+## 5.7 fixture的调用结束/执行清理代码
+pytest支持在fixture退出作用域的时候执行相关的清理/结束代码。使用yield而不是return关键字的时候，yield后面的语句将会在fixture退出作用域的时候被调用来清理测试用例。
+```
+# conftest.py
+
+import smtplib
+import pytest
+
+@pytest.fixture(scope="module")
+def smtp_connection():
+    smtp_connection = smtplib.SMTP("smtp.gmail.com", 587, timeout=5)
+    yield smtp_connection
+    print("teardown smtp")
+    smtp_connection.close()
+```
+无论测试是否发生了异常，print及smtp.close()语句将在module的最后一个测试函数完成之后被执行。
+```
+$ pytest -s -q --tb=no
+FFteardown smtp
+2 failed in 0.12 seconds
+```
+可以看到在两个测试函数完成后smtp_connection实例调用了相关的代码。注意如果我们定义scope为function级别(scope='function')，该部分代码会在每个测试函数结束后都会调用。测试函数本身并不需要关心fixture的实现的细节。
+我们也可以在with语句中使用yield:
+```
+@pytest.fixture(scope="module")
+def smtp_connection():
+    with smtplib.SMTP("smtp.gmail.com", 587, timeout=5) as smtp_connection:
+        yield smtp_connection
+```
+因为with语句结束,smtp_connection会在测试结束后被自动关闭.
+注意如果在yield之前发生了异常，那么剩余的yield之后的代码则不会被执行。
+
+另外一个处理teardown的代码的方式时使用addfinalizer函数来注册一个teardown的处理函数。
+如下是一个例子：
+```
+# conftest.py
+import smtplib
+import pytest
+
+@pytest.fixture(scope="module")
+def smtp_connection(request):
+    smtp_connection = smtplib.SMTP("smtp.gmail.com", 587, timeout=5)
+
+    def fin():
+        print("teardown smtp_connection")
+        smtp_connection.close()
+    request.addfinalizer(fin)
+    return smtp_connection
+```
+yield和addfinalizer在测试结束之后的调用是基本类似的，addfinalizer主要有两点不同于yield：
+1. 可以注册多个完成函数
+2. 无论fixture的代码是否存在异常，addfinalizer注册的函数都会被调用，这样即使出现了异常，也可以正确的关闭那些在fixture中创建的资源。
+```
+@pytest.fixture
+def equipments(request):
+    r = []
+    for port in ('C1', 'C3', 'C28'):
+        equip = connect(port)
+        request.addfinalizer(equip.disconnect)
+        r.append(equip)
+    return r
+```
+该示例中，如果"C28"因为异常失败了，"C1"和"C3"也会被正确的关闭。当然，如果在addfinalizer调用注册前就发生了异常，这个注册的函数就不会被执行了。
+
+## 5.8 Fixtures可以获取测试对象的上下文
+fixture函数可以通过接收一个request对象来获取"请求"的测试函数/类/模块的上下文。
+使用前面的smtp_connection做为扩展示例，我们在测试模块中来使用我们的fixture读取一个可选的服务器URL：
+```
+# conftest.py
+import pytest
+import smtplib
+
+@pytest.fixture(scope="module")
+def smtp_connection(request):
+    server = getattr(request.module, "smtpserver", "smtp.gmail.com")
+    smtp_connection = smtplib.SMTP(server, 587, timeout=5)
+    yield smtp_connection
+    print("finalizing %s (%s)" % (smtp_connection, server))
+    smtp_connection.close()
+```
+我们使用request.module属性从测试模块中选择获取smtpserver的属性。即使我们再执行一次，也不会有什么变化：
+```
+$ pytest -s -q --tb=no
+FFfinalizing <smtplib.SMTP object at 0xdeadbeef> (smtp.gmail.com)
+2 failed in 0.12 seconds
+```
+我们来快速的创建一个在其中设置了服务器的URL的测试模块：
+```
+# test_anothersmtp.py
+smtpserver = "mail.python.org" #会被smtp fixture读取
+
+def test_showhelo(smtp_connection):
+    assert 0, smtp_connection.helo()
+```
+运行结果如下：
+```
+$ pytest -qq --tb=short test_anothersmtp.py
+F [100%]
+================================= FAILURES =================================
+______________________________ test_showhelo _______________________________
+test_anothersmtp.py:5: in test_showhelo
+assert 0, smtp_connection.helo()
+E AssertionError: (250, b'mail.python.org')
+E assert 0
+------------------------- Captured stdout teardown -------------------------
+finalizing <smtplib.SMTP object at 0xdeadbeef> (mail.python.org)
+```
+瞧，smtp_connection的实现函数使用了我们在模块中定义的新的server名。
+
+## 5.9 工厂化的fixtures
+工厂化的fixture的模式对于一个fixture在单一的测试中需要被多次调用非常有用。fixture用一个生成数据的函数取代了原有的直接返回数据。该函数可以在测试中被多次调用。
+
+如果需要，工厂也可以携带参数：
+```
+@pytest.fixture
+def make_customer_record():
+    def _make_customer_record(name):
+        return {
+            "name": name,
+            "orders": []
+        }
+    return _make_customer_record
+    
+def test_customer_records(make_customer_record):
+    customer_1 = make_customer_record("Lisa")
+    customer_2 = make_customer_record("Mike")
+    customer_3 = make_customer_record("Meredith")
+```
+如果需要管理工厂创建的数据，可以按照如下来处理fixture：
+```
+@pytest.fixture
+def make_customer_record():
+    create_records = []
+    def _make_customer_record(name):
+        record = models.Customer(name=name, orders=[])
+        created_records.append(record)
+        return record
+    
+    yield _make_customer_record
+    
+    for record in created_records:
+        record.destroy()
+        
+def test_customer_records(make_customer_record):
+    customer_1 = make_customer_record("Lisa")
+    customer_2 = make_customer_record("Mike")
+    customer_3 = make_customer_record("Meredith")
+```
+## 5.10 fixtures参数化
+fixture函数可以进行参数化的调用，这种情况下，相关测试集会被多次调用，即依赖该fixture的测试的集合。测试函数通常无需关注这种重复测试。
+fixture的参数化有助于为那些可以以多种方式配置的组件编写详尽的功能测试。
+扩展之前的示例，我们标记fixture来创建两个smtp_connection的实例，这会使得所有的测试使用这两个不同的fixture运行两次：
+```
+# conftest.py
+import pytest
+import smtplib
+
+@pytest.fixture(scope="module", params=["smtp.gmail.com", "mail.python.org"])
+def smtp_connection(request):
+    smtp_connection = smtplib.SMTP(request.param, 587, timeout=5)
+        yield smtp_connection
+        print("finalizing %s" % smtp_connection)
+        smtp_connection.close()
+```
+相对于之前的代码，这里主要的改动就是为@pytest.fixture定义了一个params，params是一个可以通过request.params在fixture中进行访问的列表。无需修改其他的代码，让我们来运行它：
+```
+$ pytest -q test_module.py
+FFFF [100%]
+================================= FAILURES =================================
+________________________ test_ehlo[smtp.gmail.com] _________________________
+smtp_connection = <smtplib.SMTP object at 0xdeadbeef>
+def test_ehlo(smtp_connection):
+response, msg = smtp_connection.ehlo()
+assert response == 250
+assert b"smtp.gmail.com" in msg
+> assert 0 # for demo purposes
+E assert 0
+test_module.py:6: AssertionError
+________________________ test_noop[smtp.gmail.com] _________________________
+smtp_connection = <smtplib.SMTP object at 0xdeadbeef>
+def test_noop(smtp_connection):
+response, msg = smtp_connection.noop()
+assert response == 250
+> assert 0 # for demo purposes
+E assert 0
+test_module.py:11: AssertionError
+________________________ test_ehlo[mail.python.org] ________________________
+smtp_connection = <smtplib.SMTP object at 0xdeadbeef>
+def test_ehlo(smtp_connection):
+response, msg = smtp_connection.ehlo()
+assert response == 250
+> assert b"smtp.gmail.com" in msg
+E AssertionError: assert b'smtp.gmail.com' in b'mail.python.
+˓→org\nPIPELINING\nSIZE 51200000\nETRN\nSTARTTLS\nAUTH DIGEST-MD5 NTLM CRAM-
+˓→MD5\nENHANCEDSTATUSCODES\n8BITMIME\nDSN\nSMTPUTF8\nCHUNKING'
+test_module.py:5: AssertionError
+-------------------------- Captured stdout setup ---------------------------
+finalizing <smtplib.SMTP object at 0xdeadbeef>
+________________________ test_noop[mail.python.org] ________________________
+smtp_connection = <smtplib.SMTP object at 0xdeadbeef>
+def test_noop(smtp_connection):
+response, msg = smtp_connection.noop()
+assert response == 250
+> assert 0 # for demo purposes
+E assert 0
+test_module.py:11: AssertionError
+------------------------- Captured stdout teardown -------------------------
+finalizing <smtplib.SMTP object at 0xdeadbeef>
+4 failed in 0.12 seconds
+```
+可以看到每个测试函数都是用不同的smtp_connection实例运行了两次。同时注意，mail.python.org这个连接在第二个测试中的test_ehlo因为一个不同的服务器字符串的检查而失败了。
+pytest会为每个fixture的参数值创建一个测试ID字符串，比如上面的例子中：test_ehlo[smtp.gmail.com]和test_ehlo[mail.python.org]。可以使用-k来通过这些ID选择特定的测试用例运行，也可以在失败的时候定位到具体的用例。运行pytest的时候带--collect-only可以显示这些生成的IDs。
+数字，字符串，布尔和None类型在测试ID中会保留他们自己的字符串的表示方式，其他的数据对象，pytest会创建一个基于参数名的字符串。可以通过ids关键字来自定义一个字符串来表示测试ID：
+```
+# test_ids.py
+import pytest
+
+@pytest.fixture(params=[0, 1], ids=["spam", "ham"])
+def a(request):
+    return request.param
+
+def test_a(a):
+    pass
+    
+def idfn(fixture_value):
+    if fixture_value == 0:
+        return "eggs"
+    else:
+        return None
+        
+@pytest.fixture(params=[0, 1], ids=idfn)
+def b(request):
+    return request.param
+    
+def test_b(b):
+    pass
+```
+上面的示例展示了ids是如何使用一个定义的字符串列表的。后续的case展示了如果函数返回了None那么pytest会自动生成一个ID。
+上面的示例结果如下：
+```
+$ pytest --collect-only
+=========================== test session starts ============================
+platform linux -- Python 3.x.y, pytest-4.x.y, py-1.x.y, pluggy-0.x.y
+cachedir: $PYTHON_PREFIX/.pytest_cache
+rootdir: $REGENDOC_TMPDIR, inifile:
+collected 10 items
+<Module test_anothersmtp.py>
+<Function test_showhelo[smtp.gmail.com]>
+<Function test_showhelo[mail.python.org]>
+<Module test_ids.py>
+<Function test_a[spam]>
+<Function test_a[ham]>
+<Function test_b[eggs]>
+<Function test_b[1]>
+<Module test_module.py>
+<Function test_ehlo[smtp.gmail.com]>
+<Function test_noop[smtp.gmail.com]>
+<Function test_ehlo[mail.python.org]>
+<Function test_noop[mail.python.org]>
+======================= no tests ran in 0.12 seconds =======================
+```
+## 5.11 在参数化的fixture中使用marks
+ pytest.param()可以用来用来接收通过marks参数传入的标志，就像使用@pytest.mark.parametrize。
+ 如下：
+ ```
+ # test_fixture_marks.py
+ import pytest
+ @pytest.fixture(params=[0, 1, pytest.param(2, marks=pytest.mark.skip)])
+ def data_set(request):
+    return request.param
+    
+ def test_data(data_set):
+    pass
+ ```
+ 运行该测试会跳过data_set中值为2的调用：
+ ```
+ $ pytest test_fixture_marks.py -v
+=========================== test session starts ============================
+platform linux -- Python 3.x.y, pytest-4.x.y, py-1.x.y, pluggy-0.x.y -- $PYTHON_
+˓→PREFIX/bin/python
+cachedir: $PYTHON_PREFIX/.pytest_cache
+rootdir: $REGENDOC_TMPDIR, inifile:
+collecting ... collected 3 items
+test_fixture_marks.py::test_data[0] PASSED [ 33%]
+test_fixture_marks.py::test_data[1] PASSED [ 66%]
+test_fixture_marks.py::test_data[2] SKIPPED [100%]
+=================== 2 passed, 1 skipped in 0.12 seconds ====================
+ ```
+ 
+ ## 5.12 模块化： 通过fixture函数使用fixture
+不仅测试函数可以使用fixture，fixture函数本身也可以使用其他的fixture。这可以使得fixture的设计更容易模块化，并可以在多个项目中复用fixture。
+扩展前面的例子作为一个简单的范例，我们在一个已经定义的smtp_connection中插入一个实例化的APP对象：
+```
+# test_appsetup.py
+
+import pytest
+
+class App(object):
+    def __init__(self, smtp_connection):
+        self.smtp_connection = smtp_connection
+
+@pytest.fixture(scope="module")
+def app(smtp_connection)：
+    return App(smtp_connection)
+
+def test_smtp_connection_exists(app):
+    assert app.smtp_connection
+```
+这里我们定义了一个名为app的fixture并且接收之前定义的smtp_connection的fixture，在其中实例化了一个App对象。运行结果如下：
+```
+$ pytest -v test_appsetup.py
+=========================== test session starts ============================
+platform linux -- Python 3.x.y, pytest-4.x.y, py-1.x.y, pluggy-0.x.y -- $PYTHON_
+˓→PREFIX/bin/python
+cachedir: $PYTHON_PREFIX/.pytest_cache
+rootdir: $REGENDOC_TMPDIR, inifile:
+collecting ... collected 2 items
+test_appsetup.py::test_smtp_connection_exists[smtp.gmail.com] PASSED [ 50%]
+test_appsetup.py::test_smtp_connection_exists[mail.python.org] PASSED [100%]
+========================= 2 passed in 0.12 seconds =========================
+```
+因为对smtp_connection做了参数化，测试用例将会使用两个不同的App实例分别运行来连接各自的smtp服务器。App fixture无需关心smtp_connection的参数化，pytest会自动的分析其中的依赖关系。
+注意，app fixture声明了作用域是module，并使用了同样是module作用域的smtp_connection。如果smtp_connection是session的作用域，这个示例依然是有效的：fixture可以引用作用域更广泛的fixture，但是反过来不行，比如session作用域的fixture不能引用一个module作用域的fixture。
+
+## 5.13 fixture的自动分组
+测试过程中，pytest会保持激活的fixture的数目是最少的。
+如果有一个参数化的fixture，那么所有使用它的测试用例会首先使用其一个实例来执行，直到它完成后才会去调用下一个实例。 这样做使得应用程序的测试中创建和使用全局状态更为简单(Why?)。
+下面的示例使用了两个参数化的fixtures，其中一个是module作用域的，所有的函数多增加了打印用来展示函数的setup/teardown的过程：
+```
+# test_module.py
+import pytest
+
+@pytest.fixture(scope="module", params=["mod1", "mod2"])
+def modarg(request):
+    param = request.param
+    print("  SETUP modarg %s" % param)
+    yield param
+    print("  TEARDOWN modarg %s" % param)
+
+@pytest.fixture(scope="function", params=[1, 2])
+def otherarg(request):
+    param = request.param
+    print("  SETUP otherarg %s" % param)
+    yield param
+    print("  TEARDOWN otherarg %s" % param)
+
+def test_0(otherarg):
+    print("  RUN test0 with otherarg %s" % otherarg)
+def test_1(modarg):
+    print("  RUN test1 with modarg %s" % modarg)
+def test_2(otherarg, modarg):
+    print("  RUN test2 with otherarg %s and modarg %s" % (otherarg, modarg))
+```
+运行结果如下：
+```
+$ pytest -v -s test_module.py
+============================ test session starts =============================
+platform linux -- Python 3.x.y, pytest-4.x.y, py-1.x.y, pluggy-0.x.y -- $PYTHON_PREFIX/bin/python
+cachedir: $PYTHON_PREFIX/.pytest_cache
+rootdir: $REGENDOC_TMPDIR, inifile:
+
+collected 8 items
+
+test_module.py::test_0[1]   SETUP otherarg 1
+  RUN test0 with otherarg 1
+PASSED  TEARDOWN otherarg 1
+
+test_module.py::test_0[2]   SETUP otherarg 2
+  RUN test0 with otherarg 2
+PASSED  TEARDOWN otherarg 2
+
+test_module.py::test_1[mod1]   SETUP modarg mod1
+  RUN test1 with modarg mod1
+PASSED
+test_module.py::test_2[mod1-1]   SETUP otherarg 1
+  RUN test2 with otherarg 1 and modarg mod1
+PASSED  TEARDOWN otherarg 1
+
+test_module.py::test_2[mod1-2]   SETUP otherarg 2
+  RUN test2 with otherarg 2 and modarg mod1
+PASSED  TEARDOWN otherarg 2
+
+test_module.py::test_1[mod2]   TEARDOWN modarg mod1
+  SETUP modarg mod2
+  RUN test1 with modarg mod2
+PASSED
+test_module.py::test_2[mod2-1]   SETUP otherarg 1
+  RUN test2 with otherarg 1 and modarg mod2
+PASSED  TEARDOWN otherarg 1
+
+test_module.py::test_2[mod2-2]   SETUP otherarg 2
+  RUN test2 with otherarg 2 and modarg mod2
+PASSED  TEARDOWN otherarg 2
+  TEARDOWN modarg mod2
+
+
+========================== 8 passed in 0.03 seconds ==========================
+```
+可以看到参数化的modarg使得测试的执行顺序保持这最少的激活fixtures的状态。mod1在mod2被创建前就已经被释放了。
+特别需要注意的是，test_0首先执行完成，然后是test_1使用mod1执行，然后test_2使用mod1执行，然后是test_1使用mod2，最后是test_2使用mod2.
+function作用域的fixture：otherarg在每个测试函数前被创建，每次函数结束后释放。
+注：有兴趣的话可以将function的otherarg改成module，测试函数的执行顺序会发生变化。 :)
+
+## 5.14 在classes/modules或者项目中使用fixtures
+有时测试函数不需要直接使用fixture对象。比如测试用例可能需要操作一个空文件夹但是并不关心具体是哪个文件夹，这里就可以使用标准库的tmpfile来实现。我们将该fixture的实现放在conftest.py中：
+```
+# conftest.py
+
+import pytest
+import tempfile
+import os
+
+@pytest.fixture()
+def cleandir():
+    newpath = tempfile.mkdtemp()
+    os.chdir(newpath)
+```
+通过usefixtures标记来使用它：
+```
+# test_setenv.py
+
+import os
+import pytest
+
+@pytest.mark.usefixtures("cleandir")
+class TestDirectoryInit(object):
+    def test_cwd_starts_empty(self):
+        assert os.listdir(os.getcwd()) == []
+        with open("myfile", "w") as f:
+            f.write("hello")
+
+    def test_cwd_again_starts_empty(self):
+        assert os.listdir(os.getcwd()) == []
+```
+因为使用了usefixtures，所以cleandir会在每个测试用例之前被调用，就好像为这些测试指定了"cleandir"入参一样。
+如下是运行测试的结果：
+```
+$ pytest -q
+.. [100%]
+2 passed in 0.12 seconds
+```
+可以同时指定多个fixtures：
+```
+@pytest.mark.usefixtures("cleandir", "anotherfixture")
+def test():
+    ...
+```
+可以使用mark的通用特性来为测试module指定fixture：
+```
+pytestmark = pytest.mark.usefixtures("cleandir")
+```
+注意这里的变量只能命名为pytestmark，如果命名为其他变量(比如foomark)不会工作。
+也可以将fixture写在ini文件中来在整个测试用例中使用fixture：
+```
+# pytest.ini
+[pytest]
+usefixtures = cleandir
+```
+
+**警告** 该标记不会对fixture函数生效，比如下面的代码不会按照你所想的调用my_other_fixture
+```
+@pytest.mark.usefixtures("my_other_fixture")
+@pytest.fixture
+def my_fixture_that_sadly_wont_use_my_other_fixture():
+    ...
+```
+
+## 5.15 自动使用fixtures((嗑药一般的)飞一般的xUnit？)
+有时可能希望在不用显式声明函数参数或者使用usefixtures装饰器的情况下自动调用相关的fixtures。作为一个实际生产中可能碰到的案例，假设我们有一个数据库的fixture，包含begin/rollback/commit等操作，并且我们希望在每个测试步骤前后分别调用数据库的事务处理和rollback操作。
+下面是这个案例的一个实现：
+```
+# test_db_transact.py
+
+import pytest
+
+class DB(object):
+    def __init__(self):
+        self.intransaction = []
+    def begin(self, name):
+        self.intransaction.append(name)
+    def rollback(self):
+        self.intransaction.pop()
+
+@pytest.fixture(scope="module")
+def db():
+    return DB()
+
+class TestClass(object):
+    @pytest.fixture(autouse=True)
+    def transact(self, request, db):
+        db.begin(request.function.__name__)
+        yield
+        db.rollback()
+
+    def test_method1(self, db):
+        assert db.intransaction == ["test_method1"]
+
+    def test_method2(self, db):
+        assert db.intransaction == ["test_method2"]
+```
+在class里定义的fixture transact标记了autouse为True，表示这个class里的所有测试函数无需任何其他声明就会自动的使用transact这个fixture。
+运行这个测试，我们可以得到两个pass的测试结果：
+```
+$ pytest -q
+.. [100%]
+2 passed in 0.12 seconds
+```
+autouse的fixture遵循以下规则：
+* autouse fixture遵守scope的定义，如果autouse fixture的scope为"session"，那么这个fixture无论定义在哪儿都只会运行一次，定义为"class"则表示在每个class中只会运行一次。
+* 如果在module中定义了autouse，那么该module中的所有测试用例都会自动使用该fixture
+* 如果在conftest.py中定义了autouse，那么该目录下的所有测试用例都会自动使用该fixture
+* 最后，请谨慎使用该功能，如果你在插件中定义了一个autouse的fixture，那么所有使用了该插件的测试用例都会自动调用该fixture。这种方式在某些情况下是有用的，比如用ini文件配置fixture，这种全局的fixture应该快速有效的确定它应该完成哪些工作，避免代价高昂的导入和计算操作。
+注意，上面的transact的fixture很可能只是你希望在项目中提供的一个fixture，而不是想要在每个测试用例中激活使用的。实现这一点的方式是将这个fixture移到conftest.py中并不要定义autouse:
+```
+# conftest.py
+@pytest.fixture
+def transact(request, db):
+    db.begin()
+    yield
+    db.rollback()
+```
+在class中定义如何使用这个fixture：
+```
+@pytest.mark.usefixtures("transact")
+class TestClass(object):
+    def test_method1(self):
+        ...
+```
+所有TestClass里的测试用例都会调用transact，而其他测试Class或测试函数则不会调用，除非他们也添加了transact这个fixture的引用。
+
+## 5.16 重写fixtures
+在大型的项目中，为了保持代码的可读性和可维护性，你可能需要重新在本地定义一个fixture来重写一个global或者root的fixture。
+
+### 5.16.1 在文件夹(conftest)这一层重写
+测试的文件结构如下：
+```
+tests/
+    __init__.py
+    conftest.py
+        # tests/conftest.py
+        import pytest
+
+        @pytest.fixture
+        def username():
+            return 'username'
+    test_something.py
+        # test/test_something.py
+        def test_username(username):
+            assert username == "username"
+
+    subfolder/
+        __init__.py
+
+        conftest.py
+            # tests/subfolder/conftest.py
+            import pytest
+
+            @pytest.fixture
+            def username(username):
+                return 'overridden-' + username
+
+        test_something.py
+            # tests/subfolder/test_something.py
+            def test_username(username):
+                assert username == 'overridden-username'
+```
+如上所示，fixture可以通过使用同样的函数名来进行重写。
+
+### 5.16.2 在module这一层重写
+文件结构如下：
+```
+tests/
+    __init__.py
+
+    conftest.py
+        # tests/conftest.py
+        @pytest.fixture
+        def username():
+            return 'username'
+    test_something.py
+        # tests/test_something.py
+        import pytest
+
+        @pytest.fixture
+        def username(username):
+            return 'overridden-' + username
+
+        def test_username(username):
+            assert username == 'overridden-username'
+
+    test_something_else.py
+        # tests/test_something_else.py
+        import pytest
+
+        @pytest.fixture
+        def username(username):
+            return 'overridden-else-' + username
+
+        def test_username(username):
+            assert username == 'overridden-else-username'
+```
+上面的例子中，不同的模块里使用了同样的函数名来进行了重写。
+
+### 5.16.3 直接使用参数化的测试重写
+文件结构如下：
+```
+tests/
+    __init__.py
+
+    conftest.py
+        # tests/conftest.py
+        import pytest
+
+        @pytest.fixture
+        def username():
+            return 'username'
+
+        @pytest.fixture
+        def other_username(username):
+            return 'other-' + username
+
+    test_something.py
+        # tests/test_something.py
+        import pytest
+
+        @pytest.mark.parametrize('username', ['directly-overridden-username'])
+        def test_username(username):
+            assert username == 'directly-overridden-username'
+
+        @pytest.mark.parametrize('username', ['directly-overridden-username-other'])
+        def test_username_other(other_username):
+            assert other_username == 'other-directly-overridden-username-other'
+```
+上面的示例中，fixture的值被直接重写成了parametrize中定义的参数值。注意这种方式情况下，即使该测试用例不调用该fixture，这个fixture的值也是被重写过的（但是有什么用呢？）。
+
+### 5.16.4 用参数化/非参数化的fixture重写非参数化/参数化的fixture
+文件结构如下：
+```
+tests/
+    __init__.py
+
+    conftest.py
+        # tests/conftest.py
+        import pytest
+
+        @pytest.fixture(params=['one', 'two', 'three'])
+        def parametrized_username(request):
+            return request.param
+
+        @pytest.fixture
+        def non_parametrized_username(request):
+            return 'username'
+
+    test_something.py
+        # tests/test_something.py
+        import pytest
+
+        @pytest.fixture
+        def parametrized_username():
+            return 'overridden-username'
+
+        @pytest.fixture(params=['one', 'two', 'three'])
+        def non_parametrized_username(request):
+            return request.param
+
+        def test_username(parametrized_username):
+            assert parametrized_username == 'overridden-username'
+
+        def test_parametrized_username(non_parametrized_username):
+            assert non_parametrized_username in ['one', 'two', 'three']
+
+    test_something_else.py
+        # tests/test_something_else.py
+
+        def test_username(parametrized_username):
+            assert parametrized_username in ['one', 'two', 'three']
+
+        def test_username(non_parametrized_username):
+            assert non_parametrized_username == 'username'
+```
+以上示例用参数化/非参数化的fixture重写了非参数化/参数化的fixture。
+
