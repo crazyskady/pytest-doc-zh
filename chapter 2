@@ -1,0 +1,474 @@
+# Chapter 2 用法
+
+### 2.1 通过python -m pytest调用pytest
+
+这是在2.0版本中新引入的功能。
+你可以通过python的解释器，利用命令行来调用测试：
+`python -m pytest [...]`
+这种调用方式几乎等同于直接调用**pytest [...]**,但需要注意的是这种通过python来调用的方式同时会将当前目录添加到**sys.path**
+
+### 2.2 退出码
+pytest有以下6种退出码：
+
+Exit code 0: 找到所有测试用例并测试通过
+
+Exit code 1: 找到测试用例并运行但是部分测试用例运行失败
+
+Exit code 2: 用户中断了测试
+
+Exit code 3: 执行过程中发生了内部错误
+
+Exit code 4: pytest命令行使用错误
+
+Exit code 5: 没有找到任何测试用例
+
+### 2.3 版本信息，参数名，环境变量的帮助
+```
+pytest --version #显示pytest的import的路径
+pytest --fixtures #显示内置的函数参数
+pytest -h | --help #帮助信息
+```
+
+### 2.4 第一(N)次测试失败后停止
+使用下面的参数可以让测试在第1(N)次测试失败后停止：
+```
+pytest -x  # 第一次测试失败后停止测试
+pytest --maxfail=2 # 第2次测试失败后停止测试
+```
+
+### 2.5 指定/选择测试用例
+Pytest在命令行中支持多种方式来运行和选择测试用例：
+
+**对模块中进行测试：**
+
+`pytest test_mod.py`
+
+**对文件夹中进行测试：**
+
+`pytest testing/`
+
+**通过关键字表达式来进行测试：**
+
+`pytest -k "MyClass and not method"`
+这种方式会执行文件名，类名以及函数名与给定的字符串表达式相匹配的测试用例。
+上面的用例会执行**TestMyClass.test_something**但是不会执行**TestMyClass.test_method_simple**
+
+*and not 在这里是表达式，未经过测试*
+
+**通过节点id来进行测试**
+
+每个被选中的测试用例都会被分配一个唯一的*nodeid*，它由模块文件名和以下说明符组成:参数化的类名、函数名和参数，用::分隔。
+
+可以通过下面的方式运行模块中的指定的测试用例：
+
+`pytest test_mod.py::test_func`
+
+也可以通过下面这种方式：
+
+`pytest test_mod.py::TestClass::test_method`
+
+**通过标记符来进行测试**
+
+`pytest -m slow`
+
+这种方式会运行所有通过装饰器 *@pytest.mark.slow*进行装饰的测试用例。
+
+关于标记符请参考[marks](ToBeAdded)
+
+**通过包来运行**
+
+`pytest --pyargs pkg.testing`
+
+这种方式会导入*pkg.testing*，并且基于该包所在为止来查找并运行测试用例。
+
+### 2.6 修改python的traceback的打印
+
+示例：
+```
+pytest --showlocals #在tracebacks中显示本地变量
+pytest -l           #同上
+
+pytest --tb=auto    #(默认显示方式)该方式会显示tracebacks的第一条和最后一条的详细信息
+                    #其余的信息会简略显示
+
+pytest --tb=long    #详细显示所有的tracebacks
+pytest --tb=short   #简略显示tracebacks
+pytest --tb=line    #每个错误只显示一行
+pytest --tb=native  #以python标准库模式输出
+pytest --tb=no      #不输出tracebacks
+```
+另外还有比**--tb=long**输出更详细的参数**--full-trace**。在该参数下，**KeyboardInterrupt**(Ctrl+C)在中断traceback的输出的时候同时会打印栈信息。 这在测试耗时过长的时候非常有用，使用该组合可以帮助我们找到测试用例挂死在何处。
+
+如果使用默认方式，测试被中断的时候不会有任何栈信息输出(因为**KeyboardInterrupt**被pytest捕获了)，使用该参数可以保证traceback能够显示出来。(**这段翻译怪怪的**)
+
+### 详尽的测试报告
+这是2.9的新功能。
+
+参数**-r**可以用来在测试结束后展示一份“测试概要信息”，这使得在大型测试套中获取一份清楚的测试结果(失败，跳过等测试信息)十分简单。
+
+示例：
+```
+#test_example.py的内容
+import pytest
+
+@pytest.fixture
+def error_fixture():
+    assert 0
+
+def test_ok():
+    print("ok")
+
+def test_fail():
+    assert 0
+
+def test_error(error_fixture):
+    pass
+
+def test_skip():
+    pytest.skip("skipping this test")
+
+def test_xfail():
+    pytest.xfail("xfailing this test")
+
+@pytest.mark.xfail(reason="always xfail")
+def test_xpass():
+    pass
+```
+
+```
+C:\>pytest -ra
+========================== test session starts ==========================
+platform win32 -- Python 3.7.2, pytest-4.2.0, py-1.7.0, pluggy-0.8.1
+rootdir: TMPDIR, inifile:
+collected 6 items
+
+test_example.py .FEsxX                                                                                           [100%]
+
+========================== ERRORS ==========================
+__________________________ ERROR at setup of test_error __________________________
+
+    @pytest.fixture
+    def error_fixture():
+>       assert 0
+E    assert 0
+
+test_example.py:5: AssertionError
+========================== FAILURES ==========================
+__________________________ test_fail __________________________
+
+    def test_fail():
+>       assert 0
+E    assert 0
+
+test_example.py:11: AssertionError
+========================== short test summary info ==========================
+SKIPPED [1] C:\test_example.py:18: skipping this test
+XFAIL test_example.py::test_xfail
+  reason: xfailing this test
+XPASS test_example.py::test_xpass always xfail
+ERROR test_example.py::test_error
+FAILED test_example.py::test_fail
+=========== 1 failed, 1 passed, 1 skipped, 1 xfailed, 1 xpassed, 1 error in 0.09 seconds ===========
+```
+**-r**后可以追加一些参数，上面示例中的*a*表示"除了passes的所有信息"。
+
+可以追加的参数列表如下：
+
+* f - failed
+* E - error
+* s - skipped
+* x - xfailed
+* X - xpassed
+* p - passed
+* P - passed with output
+* a - all except pP
+可以同时追加多个参数，如果你想只看"failed"和"skipped"的测试结果，你可以执行：
+```
+C:\>pytest -rfs
+========================== test session starts ==========================
+platform win32 -- Python 3.7.2, pytest-4.2.0, py-1.7.0, pluggy-0.8.1
+rootdir: TMPDIR, inifile:
+collected 6 items
+
+test_example.py .FEsxX                                                                                                                                                                [100%]
+
+========================== ERRORS ==========================
+__________________________ ERROR at setup of test_error __________________________
+
+    @pytest.fixture
+    def error_fixture():
+>       assert 0
+E    assert 0
+
+test_example.py:5: AssertionError
+========================== FAILURES ==========================
+__________________________ test_fail __________________________
+
+    def test_fail():
+>       assert 0
+E    assert 0
+
+test_example.py:11: AssertionError
+========================== short test summary info ==========================
+FAILED test_example.py::test_fail
+SKIPPED [1] C:\test_example.py:18: skipping this test
+========================== 1 failed, 1 passed, 1 skipped, 1 xfailed, 1 xpassed, 1 error in 0.13 seconds ==========================
+```
+
+**p**可以用来显示pass的测试用例，**P**会在测试报告中增加一段"PASSES"的信息来显示通过的测试用例：
+```
+C:\>pytest -rpP
+========================== test session starts ==========================
+platform win32 -- Python 3.7.2, pytest-4.2.0, py-1.7.0, pluggy-0.8.1
+rootdir: TMPDIR, inifile:
+collected 6 items
+
+test_example.py .FEsxX                                                                                                                                                                [100%]
+
+========================== ERRORS ==========================
+__________________________ ERROR at setup of test_error __________________________
+
+    @pytest.fixture
+    def error_fixture():
+>       assert 0
+E    assert 0
+
+test_example.py:5: AssertionError
+========================== FAILURES ==========================
+__________________________ test_fail __________________________
+
+    def test_fail():
+>       assert 0
+E    assert 0
+
+test_example.py:11: AssertionError
+========================== short test summary info ==========================
+PASSED test_example.py::test_ok
+========================== PASSES ==========================
+__________________________ test_ok __________________________
+--------------------------- Captured stdout call ---------------------------
+ok
+========================== 1 failed, 1 passed, 1 skipped, 1 xfailed, 1 xpassed, 1 error in 0.08 seconds ==========================
+```
+
+### 2.8 测试失败时自动调用PDB
+**pytest**允许通过命令行使能在测试失败时自动调用python的内置调试工具PDB：
+`pytest --pdb`
+
+这会在每次测试失败(或者发生KeyboardInterrupt)的时候都去调用PDB。通常我们可能只需要在第一次测试失败的时候来调用pdb：
+```
+pytest -x --pdb          #首次失败的时候调用pdb，然后结束测试进程
+pytest --pdb --maxfail=3 #前三次失败的时候调用pdb
+```
+注意所有的异常信息都会保存在sys.last_value, sys.last_type和sys.last_traceback中。
+在交互使用中，这允许使用任何调试工具进入后期调试。我们也可以手动的访问这些异常信息，如下：
+```
+(Pdb) import sys
+(Pdb) sys.last_traceback.tb_lineno
+1448
+(Pdb) sys.last_value
+AssertionError('assert 0')
+(Pdb) sys.last_type
+<class 'AssertionError'>
+```
+
+### 2.9 测试启动时调用PDB
+**pytest**允许在测试启动时立即调用pdb：
+`pytest --trace`
+这会在每个测试开始时立即调用python的pdb。
+
+### 2.10 设置断点
+在代码中使用python的原生接口**python import pdb; pdb.set_trace()**来设置断点，在pytest中会自动禁用该测试的输出捕获：
+*其他测试的输出捕获不会受影响
+*先前的测试中已经被捕获的输出会被正常处理
+*同一测试中的后续输出不会被捕获，而被转发给sys.stdout。注意即使退出交互式pdb继续运行测试，这一设置依然生效
+
+### 2.11 使用内置的断点函数
+python3.7 引入了内置的断点函数 breakpoint()，pytest支持该函数：
+*当breakpoint()被调用，并且PYTHONBREAKPOINT是默认值时，pytest将会使用内部自定义的PDB UI， 而不是系统默认的PDB
+*测试完成后，返回系统默认的PDB UI
+*当使用**--pdb**参数时，breakpoint()和测试异常时都会使用内部自定义的PDB UI
+* **--pdbcls**可以用于指定自定义的调试类(这是什么鬼)
+
+### 2.12 分析测试时间
+
+显示最慢的10个测试步骤：
+`pytest --durations=10`
+默认情况下，如果测试时间很短(<0.01s)，这里不会显示执行时常，如果需要显示，在命令行中追加**-vv**参数
+
+### 2.13 创建 JUnitXML 格式的文件
+使用下面的方式可以创建Jekins或者其他的集成测试环境可读的结果文件：
+`pytest --junitxml=path`
+*path*是生成的XML文件
+3.1引入的新特性：
+可以在pytest的配置文件中设置junit_suite_name属性来配置测试结果XML中的root名称：
+```
+[pytest]
+junit_suite_name = my_suite
+```
+4.0引入的新特性：
+Junit XML规范中"time"属性应该是总的测试执行的时间，包含setup和teardown。这也是pytest的默认行为。如果想要只显示测试的时间(call duration)，配置junit_duration_report:
+```
+[pytest]
+junit_duration_report = call
+```
+
+#### 2.13.1 record_property
+2.8引入
+
+3.5更新: 因为用户属性并不是对所有的报告都生效，将record_xml_property改名为record_property，不再推荐使用record_xml_property.
+
+如果想要给某个测试添加额外信息，可以使用record_property固件：
+```
+def test_function(record_property):
+    record_property("example_key", 1)
+    assert True
+```
+这会在生成testcase的时候增加一个额外的属性example_key="1"
+```
+<testcase classname="test_function" file="test_function.py" line="0" name="test_function" time="0.0009">
+    <properties>
+        <property name="example_key" value="1" />
+    </properties>
+</testcase>
+```
+你也可以将该功能与自定义的标签一起使用：
+```
+# conftest.py的内容
+def pytest_collection_modifyitems(session, config, items):
+    for item in items:
+        for marker in item.iter_markers(name="test_id"):
+            test_id = marker.args[0]
+            item.user_properties.append(("test_id", test_id))
+```
+在测试用例中：
+```
+# test_function.py的内容
+import pytest
+
+@pytest.mark.test_id(1501)
+def test_function():
+    assert True
+```
+测试结果如下：
+```
+<testcase classname="test_function" file="test_function.py" line="0" name="test_function" time="0.0009">
+    <properties>
+        <property name="test_id" value="1501" />
+    </properties>
+</testcase>
+```
+**注意**： record_property尚处于实验阶段，将来可能会有所变化。
+
+同时请注意该特性会中断所有的schema(这是啥)验证，这在某些CI服务器上可能会导致一些问题。
+
+### 2.13.2 record_xml_attribute
+3.4引入
+使用record_xml_attribute可以在测试用例中增加额外的xml属性。该固件也可以用来复写已经存在的属性值：
+```
+def test_function(record_xml_attribute):
+    record_xml_attribute("assertions", "REQ-1234")
+    record_xml_attribute("classname", "custom_classname")
+    print("hello world")
+    assert True
+```
+
+与record_property不同，该固件不会新增子节点，而是在**testcase**的tag里面增加或者覆盖已有的属性：
+```
+<testcase classname="custom_classname" file="test_function.py" line="0" name="test_function" time="0.003" assertions="REQ-1234">
+    <system-out>
+        hello world
+    </system-out>
+</testcase>
+```
+**注意**： record_xml_attribute尚处于实验阶段，将来可能会有所变化。(还有一大串注释，懒得翻译了)
+
+### 2.13.3 LogXML:add_global_property
+3.0引入
+如果需要在测试套层面对所有相关的测试用例增加属性，需要使用LogXML.add_global_property
+
+```
+import pytest
+
+@pytest.fixture(scope="session")
+def log_global_env_facts(f):
+    
+    if pytest.config.pluginmanager.hasplugin("junitxml")
+        my_junit = getattr(pytest.config, "_xml", None)
+
+    my_junit.add_global_property("ARCH", "PPC")
+    my_junit.add_global_property("STORAGE_TYPE", "CEPH")
+
+@pytest.mark.usefixtures(log_global_env_facts.__name__)
+def start_and_prepare_env():
+    pass
+
+class TestMe(object):
+    def test_foo(self):
+        assert True
+```
+以上代码会在生成xml的时候，在测试套的节点下添加一个属性的节点：
+```
+<testsuite errors="0" failures="0" name="pytest" skips="0" tests="1" time="0.006">
+    <properties>
+        <property name="ARCH" value="PPC"/>
+        <property name="STORAGE_TYPE" value="CEPH"/>
+    </properties>
+    <testcase classname="test_me.TestMe" file="test_me.py" line="16" name="test_foo" time="0.000243663787842"/>
+</testsuite>
+```
+**注意**： add_global_property尚处于实验阶段，将来可能会有所变化。
+
+### 2.14 创建resultlog格式文件
+很少用，很快就要被移除了。
+
+### 2.15 将测试结果发送给在线的pastebin
+Pastebin是一个用户存储纯文本的web应用。用户可以通过互联网分享文本片段，一般都是源代码。
+(没用过这个，不翻了 >_<_)
+
+### 2.16 禁用插件
+如果想要在运行时禁用特定的插件，使用 **-p**以及**no:**前缀符。
+
+如： 禁止加载**doctest**插件：
+`pytest -p no:doctest`
+
+### 2.17 在python代码中运行pytest
+2.0引入
+你可以在python代码中直接调用**pytest**:
+`pytest.main()`
+这和在命令行中使用**pytest**是一样的。 这种方式不会抛出**SystemExit**异常，而会返回exitcode。 通过如下方式可以传入调用参数：
+`pytest.main(['-x', 'mytestdir'])`
+你可以在pytest.main中指定额外的插件：
+```
+# myinvoke.py的内容
+import pytest
+class MyPlugin(object):
+    def pytest_sessionfinish(self):
+        print("*** test run reporting finishing")
+
+pytest.main(["-qq"], plugins=[MyPlugin()])
+```
+运行代码就可以发现MyPlugin被添加到hook里并被调用：
+```
+C:\>python myinvoke.py
+.FEsxX                                                                                  [100%]*** test run reporting finishing
+
+========================= ERRORS =========================
+_____________________ ERROR at setup of test_error _____________________
+
+    @pytest.fixture
+    def error_fixture():
+>       assert 0
+E    assert 0
+
+test_example.py:5: AssertionError
+========================= FAILURES =========================
+_____________________ test_fail _____________________
+
+    def test_fail():
+>       assert 0
+E    assert 0
+
+test_example.py:11: AssertionError
+```
+**注意:**调用pytest.main()会导入你的测试用例及其所引用的所有的模块。因为python存在模块导入的缓存机制，如果多次调用pytest.main()，后续的调用也不会再刷新这些导入的资源。因此，不建议再同一进程中多次调用pytest.main() (比如重新运行测试).
