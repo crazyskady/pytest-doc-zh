@@ -1,0 +1,1014 @@
+# Chapter 22 API参考
+
+## 22. 函数
+22.1.1 pytest.approx
+
+approx(expected, rel=None, abs=None, nan_ok=False)
+判断两个数字(或两组数字)是否在误差允许范围内相等。
+由于浮点数的精度问题，有的时候我们认为相等的数字其实并不相等：
+```
+>>> 0.1 + 0.2 == 0.3
+False
+```
+这种情形在编写测试用例的时候经常碰到，我们需要判断某些浮点值是否符合预期。一个解决方法是判断浮点值是否在误差范围内：
+```
+>>> abs((0.1 + 0.2) - 0.3) < 1e-6
+True
+```
+然而，这种方式既繁琐又不易理解。此外，并不推荐上面这种绝对比较的方式，因为没有一种对所有情况都适用的标准误差。1e-6对于1左右的数字来说是一个很好的误差，但是对于大数来说太小了，对于更小的数来说又太大了。最好的方式是将误差作为期望值的一部分，但是这样的方式更难正确并简洁的用代码来表达。
+
+approx类使用了尽量简洁的语法来进行浮点数比较：
+```
+>>> from pytest import approx
+>>> 0.1 + 0.2 == approx(0.3)
+True
+```
+同样可以用于数据集：
+```
+>>> (0.1 + 0.2, 0.2 + 0.4) == approx((0.3, 0.6))
+True
+```
+也可以用于字典：
+```
+>>> {'a': 0.1 + 0.2, 'b': 0.2 + 0.4} == approx({'a': 0.3, 'b': 0.6})
+True
+```
+numpy格式的数组：
+```
+>>> import numpy as np
+>>> np.array([0.1, 0.2]) + np.array([0.2, 0.4]) == approx(np.array([0.3, 0.6]))
+True
+```
+numpy的标量（没研究过标量）：
+```
+>>> import numpy as np
+>>> np.array([0.1, 0.2]) + np.array([0.2, 0.1]) == approx(0.3)
+True
+```
+可以通过参数来设置approx的相对或者绝对误差：
+```
+>>> 1.0001 == approx(1)
+False
+>>> 1.0001 == approx(1, rel=1e-3)
+True
+>>> 1.0001 == approx(1, abs=1e-3)
+True
+```
+
+如果指定了abs，那么比较时不会考虑相对误差，换句话说，即使误差在默认的相对误差1e-6的范围内，如果超过了abs定义的误差，这两个数的比较结果也是不想等的。但是如果abs和rel都定义了，那么只要满足其中任何一个，都会被认为时相等的：
+```
+>>> 1 + 1e-8 == approx(1)
+True
+>>> 1 + 1e-8 == approx(1, abs=1e-12)
+False
+>>> 1 + 1e-8 == approx(1, rel=1e-6, abs=1e-12)
+True
+```
+如果你准备使用approx，那么你可能想知道这个方法与其他的浮点数比较的通用方法有什么不同，当然其他的比较流行的比较方式也都是基于rel和abs误差的，但是确实时有区别的：
+* math.isclose(a, b, rel_tol=1e-9, abs_tol=0.0)
+* numpy.isclose(a, b, rtol=1e-5, atol=1e-8)
+* unittest.TestCase.assertAlmostEqual(a, b)
+* a == pytest.approx(b, rel=1e-6, abs=1e-12)
+
+`注意，3.2 更新： 为了保持一致性，如果使用>, >=, < 以及<=会引发一个TypeError`
+
+### 22.1.2 pytest.fail
+fail(msg=”, pytrace=True)
+使用给定的消息显式地使正在执行的测试失败。
+参数：
+* msg(str) - 显示给用户的失败消息
+* pytrace(bool) - 如果设置为false，那么使用msg作为完整的失败信息而不显示python的traceback
+
+### 22.1.3 pytest.skip
+skip(msg[, allow_module_level=False ])
+使用给定的消息跳过正在执行的测试。
+该函数只能在测试阶段（setup/call/teardown）或者collection阶段通过使能allow_module_level调用。
+参数：
+* allow_module_level(bool) - 允许该函数在module level调用，跳过该module剩余的测试。默认为False
+***最好使用pytest.mark.skipif***
+
+### 22.1.4 pytest.importskip
+importorskip(modname, minversion=None, reason=None)
+如果module不能被import，那么跳过该测试
+参数：
+* modename(str) - 待import的module的名字
+* minversion(str) - 如果定义了该参数，那么定义在__version__中的版本号必须不小于该值，否则也会跳过测试
+* reason(str) - 如果定义了该参数，那么这个字符串会在module不能import的时候显示
+
+### 22.1.5 pytest.xfail
+xfail(reason=”)
+使用给定的原因强制当前的测试或者setup失败。
+该函数只能在测试阶段调用(setup/call/teardown)
+***最好使用pytest.mark.xfail***
+
+### 22.1.6 pytest.exit
+exit(msg, returncode=None)
+退出测试进程
+参数：
+    * msg(str) - 退出时显示的信息
+    * returncode(int) - 退出pytest的时候的返回码
+
+### 22.1.7 pytest.main
+main(args=None, plugins=None)
+在进程中执行测试结束后，返回一个退出码
+参数：
+    * args - 命令行参数列表
+    * plugins - 初始化阶段自动注册的插件对象列表
+
+### 22.1.8 pytest.param
+param(*values[, id ][, marks])
+为pytest.mark.parametrize或parametrized fixtures指定参数：
+```
+@pytest.mark.parametrize("test_input, expected", [
+    ("3+5", 8),
+    pytest.param("6*9", 42, marks=pytest.mark.xfail)
+])
+def test_eval(test_input, expected):
+    assert eval(test_input) == expected
+```
+参数：
+* values - 按照顺序定义的参数集
+* marks - 为参数集指定的marker
+* id(str) - 为该参数集指定一个id
+
+### 22.1.9 pytest.raises
+with raises(expected_exception: Exception[, match ][, message ]) as excinfo
+判断代码或者函数是否调用/抛出了指定的异常。
+参数：
+* match - 如果指定了该参数，检查抛出的异常是否与该文本匹配
+* message - (4.1以后不再推荐使用) 如果指定了该参数，在没有匹配到异常时显示此消息
+
+使用pytest.raises作为上下文管理器可以捕获指定的异常：
+```
+>>> with raises(ZeroDivisionError):
+...     1/0
+```
+
+如果上面的代码没有抛出ZeroDivisionError异常，这里的检查结果就是失败的。
+也可以使用match参数来检查异常是否与指定文本相匹配
+```
+>>> with raises(ValueError, match='must be 0 or None'):
+...     raise ValueError("value must be 0 or None")
+>>> with raises(ValueError, match=r'must be \d+$'):
+...     raise ValueError("value must be 42")
+```
+上下文管理器会生成一个ExceptionInfo对象，其中包含了捕获的异常的详细信息：
+```
+>>> with raises(ValueError) as exc_info:
+...     raise ValueError("value must be 42")
+>>> assert exc_info.type is ValueError
+>>> assert exc_info.value.args[0] == "value must be 42"
+```
+4.1以后不再推荐： 使用message参数自定义失败信息。 因为用户经常用错。。。。
+
+还有一堆。。。感觉平时用不着。不写了
+
+### 22.1.10 pytest.deprecated_call
+with deprecated_call()
+检查是否触发了DeprecationWarning或者PendingDeprecationWarning：
+```
+>>> import warnings
+>>> def api_call_v2():
+...     warnings.warn('use v3 of this api', DeprecationWarning)
+...     return 200
+>>> with deprecated_call():
+...     assert api_call_v2() == 200
+```
+
+### 22.1.11 pytest.register_assert_rewrite
+register_assert_rewrite(*names)
+注册一个或者多个module名，这些module的assert会在import的时候被重写
+该函数会使得这些package内的module的assert语句被重写，所以需要保证该函数在module被import之前调用，通常放在__init__.py中
+    如果给定的module名不是string类型会抛出TypeError
+
+### 22.1.12 pytest.warns
+with warns(expected_warning: Exception[, match ])
+判断是否出现了指定的告警。
+参数expected_warning可以是一个或者一系列warning类。
+该函数也可以作为上下文管理器，或者使用pytest.raises的其他用法：
+```
+>>> with warns(RuntimeWarning):
+...     warnings.warn("my warning", RuntimeWarning)
+```
+上下文管理器中，你可以时match来匹配特定的warning
+```
+>>> with warns(UserWarning, match='must be 0 or None'):
+...     warnings.warn("value must be 0 or None", UserWarning)
+>>> with warns(UserWarning, match=r'must be \d+$'):
+...     warnings.warn("value must be 42", UserWarning)
+>>> with warns(UserWarning, match=r'must be \d+$'):
+...     warnings.warn("this is not here", UserWarning)
+Traceback (most recent call last):
+...
+Failed: DID NOT WARN. No warnings of type ...UserWarning... was emitted...
+```
+
+### 22.1.13 pytest.freeze_includes
+freeze_includes()
+返回cx_freeze提供给pytest的module名称列表。。。(这玩意有啥用？)
+
+## 22.2 Marks
+
+### 22.2.1 pytest.mark.filterwarnings
+
+为测试函数添加告警filter
+pytest.mark.filterwarnings(filter)
+参数：
+* filter(str) - 告警字符串，由元组(action, message, category, module, lineno)组成，通过“：”来分割。可选字段可以省略。module名不是正则转义的。
+比如：
+```
+@pytest.mark.warnings("ignore:.*usage will be deprecated.*:DeprecationWarning")
+def test_foo():
+    ...
+```
+
+### 22.2.2 pytest.mark.parametrize
+
+Metafunc.parametrize(argnames, argvalues, indirect=False, ids=None, scope=None)
+根据给定的参数列表里的参数添加新的函数调用。参数化是在collection阶段执行的。如果有比较耗费资源的设置，请使用间接设置的方法而不是在测试用例里直接设置。
+
+参数：
+* argnames - 由逗号分隔的代表参数名的字符串，或者一个参数字符串的列表/元组
+* argvalues - argvalues的数量决定了测试函数会被调用多少次。 如果只有一个参数，那么argvalues是一个list，如果有N个参数，argvalues是一个N元tuple，tuple里的每个值代表一个参数。
+* indirect - 由参数名或者布尔值组成的列表。 这个列表是argnames的一个子集。如果这里配置了argnames，那么对应的列表中的argname会作为request.param传递给相关的fixture函数，因此使用这种方式可以在setup阶段执行开销较大的设置。
+* ids - 字符串列表或者一个函数。
+如果是字符串，则这里的id作为设置的测试id一一对应于argvalues。如果没有指定任何参数作为测试id，那么自动生成测试id。
+如果是函数，那么这个函数接受一个入参(单个的argvalue)并返回一个字符串或者None，如果返回的是None，那么自动生成测试id。
+如果没有提供id，将根据argvalues自动生成。
+* scope - 如果指定了该参数，则表示参数范围。scope用于按照参数对测试进行分组，同时也会复写fixture的范围，允许在测试上下文/配置中动态设置scope
+
+### 22.2.3 pytest.mark.skip
+
+无条件的跳过一个测试函数
+pytest.mark.skip(*, reason=None)
+参数：
+* reason(str) - 跳过测试函数的原因
+
+### 22.2.4 pytest.mark.skipif
+
+pytest.mark.skipif(condition, *, reason=None)
+参数：
+* condition(bool or str) - True/False 跳过函数的判断条件
+* reason(str) - 跳过测试函数的原因
+
+### 22.2.5 pytest.mark.usefixtures
+
+对该函数使用指定的fixtures
+`注意该函数对fixture函数不生效`
+pytest.mark.usefixtures(*names)
+参数：
+* args - 待使用的fixture的字符串名称
+
+### 22.2.6 pytest.mark.xfail
+
+指定一个函数是预期失败的。
+pytest.mark.xfail(condition=None, *, reason=None, raises=None, run=True, strict=False)
+参数：
+* condition(bool or str) - True/False 函数失败的判断条件
+* reason(str) - 测试函数失败的原因
+* raises (Exception) – 期望该函数抛出的异常。其他未指定的异常会导致该测试用失败
+* run(bool) - 是否期望该函数被执行。如果设置为False，该函数不会被执行并且测试结果是xfail。
+* strict(bool) - balabalbala。。。。。
+
+### 22.2.7 自定义marks
+可以使用pytest.mark来动态的创建marks：
+```
+@pytest.mark.timeout(10, "slow", method="thread")
+def test_function():
+    ...
+```
+上面的代码会创建一个Mark的对象去收集待测试的item，这个对象可以通过fixtures或者钩子使用Node.iter_markers来访问。 mark对象具有以下属性：
+```
+mark.args = (10, "slow")
+mark.kwargs = {"method": "thread"}
+```
+
+## 22.3 Fixtures
+
+Fixtures可以在函数或者其他fixtures中定义参数名来调用：
+测试函数调用fixture的示例：
+```
+def test_output(capsys):
+    print("hello")
+    out, err = capsys.readouterr()
+    assert out == "hello\n"
+```
+fixture调用fixture的示例：
+```
+@pytest.fixture
+def db_session(tmpdir):
+    fn = tmpdir / "db.file"
+    return connect(str(fn))
+```
+
+### 22.3.1 @pytest.fixture
+
+@fixture(scope=’function’, params=None, autouse=False, ids=None, name=None)
+标记下面的函数是fixture的装饰器。
+该装饰器可以用来定义一个带参数或者不带参数的fixture函数。
+fixture的函数名可以在定义之后用于在运行测试前调用：测试modules或者classes可以使用pytest.mark.usefixtures(fixturename)。
+测试函数可以直接使用fixture的函数名作为入参来调用fixture用以注入fixture函数的返回值。
+fixture函数可以使用return或者yield来返回需要的值。如果使用yield，那么yield后面的代码将会在teardown部分调用，并且函数中只能有一个yield。
+参数：
+* scope - fixture的作用域：function(默认)/class/module/package/session， 注意package目前是实验阶段。
+* params - 可选的参数列表。 每个参数都会触发一次调用。
+* autouse - 如果设置为True，那么所有作用域内的测试函数都会自动调用该fixture。如果是False，那么需要显式的调用fixture
+* ids - 对应参数的id，如果没有设置id，那么会根据参数自动生成id
+* name - 重命名这个fixture
+
+### 22.3.2 config.cache
+config.cache对象允许其他插件和fixture在测试运行过程中进行存储和取值。 在fixture中使用该特性需要在fixture中引入pytestconfig，然后通过ptestconfig.cache来获取。
+cache插件使用了json标准模块中的dumps/loads。
+
+*Cache.get(key, default)*
+根据给定的key查找并返回cache中的值。如果没有缓存值或者无法读取，返回默认的指定值。
+参数：
+* key - 通常以插件或者应用名开头。
+* default - 当未命中缓存或者无效缓存值时返回的默认值，必须提供。
+
+*Cache.set(key, value)*
+根据给定的值设置cache。
+参数：
+* key - 通常以插件或者应用名开头。
+* value - 必须是python的基本类型的组合，包含字典列表等一些嵌套类型。
+
+*Cache.makedir(name)*
+返回name指定的文件夹对象。如果文件夹不存在，会自动创建该文件夹。
+参数：
+* name- 必须是一个不包含/分隔符的字符串。确保名称包含你的插件或者应用程序的识别符，避免与其他cache用户发生冲突。
+
+### 22.3.3 capsys
+capsys()
+使能对sys.stdout和sys.stderr的捕获，保证被捕获的输出可以通过capsys.readouterr()来访问，capsys.readouterr()会返回(out, err)格式的元组，其中out和err是text对象。
+返回值是CaptureFixture的一个实例，示例如下：
+```
+def test_output(capsys):
+    print("hello")
+    captured = capsys.readouterr()
+    assert captured.out == "hello\n"
+```
+
+*class CaptureFixture*
+capsys(), capsysbinary(), capfd() and capfdbinary() fixtures 会返回该类的实例.
+
+*readouterr()*
+读取并返回目前捕获的输出，重置内部buffer。
+返回一个以out和err为属性的元组。
+
+*with disabled()*
+在with块代码中临时禁止捕获输出。
+
+### 22.3.4 capsysbinary
+*capsysbinary()*
+使能对sys.stdout和sys.stderr的捕获，保证被捕获的输出可以通过capsysbinary.readouterr()来访问，capsysbinary.readouterr()会返回(out, err)格式的元组，其中out和err是bytes对象。
+返回值是CaptureFixture的一个实例，示例如下：
+```
+def test_output(capsysbinary):
+    print("hello")
+    captured = capsysbinary.readouterr()
+    assert captured.out == b"hello\n"
+```
+
+### 22.3.5 capfd
+*capfd()*
+使能对文件描述符1和2的捕获，保证被捕获的输出可以通过capfd.readouterr()来访问，capfd.readouterr()会返回(out, err)格式的元组，其中out和err是text对象。
+返回值是CaptureFixture的一个实例，示例如下：
+```
+def test_system_echo(capfd):
+    os.system('echo "hello"')
+    captured = capsys.readouterr()
+    assert captured.out == "hello\n"
+```
+
+### 22.3.6 capfdbinary
+*capfdbinary()*
+使能对文件描述符1和2的捕获，保证被捕获的输出可以通过capfdbinary.readouterr()来访问，capfdbinary.readouterr()会返回(out, err)格式的元组，其中out和err是bytes对象。
+返回值是CaptureFixture的一个实例，示例如下：
+```
+def test_system_echo(capfdbinary):
+    os.system('echo "hello"')
+    captured = capfdbinary.readouterr()
+    assert captured.out == "hello\n"
+```
+
+### 22.3.7 doctest_namespace
+*doctest_namespace()*
+该fixture会返回一个被注入到doctests的命名空间的dict。
+该fixture通常与autouse一起使用：
+```
+@pytest.fixture(autouse=True)
+def add_np(doctest_namespace):
+    doctest_namespace["np"] = numpy
+```
+
+### 22.3.8 request
+
+request用于提供请求进行测试的函数的信息的fixture。
+
+class FixtureRequest
+    来自测试函数或者fixture函数的fixture请求。
+    提供了访问请求上下文的能力，如果fixture是间接参数化的，提供可选项param
+
+    *fixturename = None*
+        正在执行此请求的fixture名
+    *scope = None*
+        作用域， 为function/class/module/session之一
+    *fixturenames*
+        在该请求中所有激活的fixtures名
+    *node*
+        基本collection的节点(取决于当前的request作用域)
+    *config*
+        该request相关的pytest config对象
+    *function*
+        测试函数对象，如果该request是function作用域的话
+    *cls*
+        。。。。。太多了。懒得烦了。
+
+### 22.3.9 pytestconfig
+*pytestconfig()*
+作用域为session，返回_pytest.config.Config对象。
+```
+def test_foo(pytestconfig):
+    if pytestconfig.getoption("verbose"):
+        ...
+```
+
+### 22.3.10 record_property
+
+*record_property()*
+为测试添加一个额外的属性。 用户属性是测试报告的一部分，并且可以由报告者来进行配置，比如JUnit XML。该固件的入参格式为(name, value)， 其中value会自动使用xml编码。
+```
+def test_function(record_property):
+    record_property("example_key", 1)
+```
+
+### 22.3.11 caplog
+
+*caplog()*
+访问和控制log的捕获。
+可以通过下面的方法来访问捕获的log：
+```
+* caplog.text                 -> string格式的日志输出
+* caplog.records              -> logging.LogRecord实例列表
+* caplog.record_tuples        -> (logger_name, level, message)列表
+* caplog.clear()              -> 清除捕获的log并且格式化log字符串
+```
+该fixture会返回_pytest.logging.LogCaptureFixture实例。
+
+### 22.3.12 monkeypatch
+*monkeypatch()*
+monkeypatch可以用来在实现中修改对象/字典/os.environ：
+```
+monkeypatch.setattr(obj, name, value, raising=True)
+monkeypatch.delattr(obj, name, raising=True)
+monkeypatch.setitem(mapping, name, value)
+monkeypatch.delitem(obj, name, raising=True)
+monkeypatch.setenv(name, value, prepend=False)
+monkeypatch.delenv(name, raising=True)
+monkeypatch.syspath_prepend(path)
+monkeypatch.chdir(path)
+```
+所有的改动都会在测试函数或者fixture结束后取消。参数raising绝对了是否在set/deletion操作没有具体对象的时候是否抛出KeyError或者AttributeError。
+
+该fixture会返回MonkeyPatch实例。
+
+### 22.3.13 testdir
+testdir提供了对黑盒测试非常有用的Testdir实例，这是测试插件的理想方案。
+要使用它，请将其包含在最顶层的conftest.py文件中：
+`pytest_plugins = 'pytester'`
+
+### 22.3.14 recwarn
+*recwarn()*
+返回一个包含了测试函数触发的所有告警记录的WarningsRecorder实例。
+参考python的告警文档： http://docs.python.org/library/warnings.html 
+
+### 22.3.15 tmpdir
+*tmpdir()*
+返回一个对每个测试用例来说都是唯一的临时文件夹，该临时文件夹是系统的临时文件夹的一个子文件夹。
+返回对象是py.path.local。
+
+### 22.3.16 tmpdir_factory
+
+tmpdir_factory实例包含两个方法：
+TempdirFactory.mktemp(basename, numbered=True)
+    在系统的临时文件夹下面创建一个子文件夹并返回这个子文件夹。如果numbered是True，会通过添加一个比现有的文件夹使用的前缀数字更大的数字作为文件夹名的前缀。
+TempdirFactory.getbasetemp()
+    对_tmppath_factory.getbasetemp的后向兼容
+
+## 22.4 Hooks
+
+### 22.4.1 Bootstrapping hooks (百度翻译为步步为营，尼玛什么鬼)
+
+Bootstrapping hooks 在插件注册的一开始就被调用(内部和setuptools插件)。
+*pytest_load_initial_conftests(early_config, parser, args)*
+在命令行选项解析之前，实现加载初始化conftest文件。
+`注意该钩子不会被conftest.py本身调用，只对setuptools插件生效`
+参数：
+* early_config (_pytest.config.Config) – pytest配置对象
+* args (list[str]) –  命令行传递的参数
+* parser (_pytest.config.Parser) – 添加命令行选项
+
+*pytest_cmdline_preparse(config, args)*
+不推荐使用。在选项解析前修改命令行参数。
+不推荐，将来会被移除，使用pytest_load_initial_conftest()代替。
+`注意该钩子不会被conftest.py本身调用，只对setuptools插件生效`
+参数：
+* config (_pytest.config.Config) – pytest配置对象
+* args (list[str]) –  命令行传递的参数
+
+`pytest_cmdline_parse(pluginmanager, args)`
+返回初始化好的配置对象，解析特定的参数。
+`注意该钩子不会被conftest.py本身调用，只对setuptools插件生效`
+参数：
+* pluginmanager (_pytest.config.PytestPluginManager) – pytest的插件管理器
+* args (list[str]) –  命令行传递的参数
+
+`pytest_cmdline_main(config)`
+该函数是用来执行命令行的主函数。默认的实现是调用配置的钩子并运行主函数runtest_mainloop：
+`注意该钩子不会被conftest.py本身调用，只对setuptools插件生效`
+参数：
+* config (_pytest.config.Config) – pytest配置对象
+
+### 22.4.2 初始化钩子
+初始化钩子在插件及conftest.py中调用。
+
+*pytest_addoption(parser)*
+注册argparse-style选项以及ini-style配置值，在测试运行开始调用一次。
+`注意，因为pytest的插件查找机制，该函数只应该在测试的root文件夹下的插件及conftest.py中实现`
+参数：
+* parser (_pytest.config.Parser) – 添加命令行选项使用pytest.addoption(...)，添加ini-file值使用parser.addini(...)
+
+之后可以通过config对象来访问：
+* config.getoption(name) 来获取命令行选项的值
+* config.getini(name) 来获取从ini-style文件中读取的值
+
+config对象在许多内部对象中通过.config属性来传递，也可以使用pytestconfig这个fixture来获取config对象。
+`注意该钩子与hookwrapper=True不兼容`
+
+*pytest_addhooks(pluginmanager)*
+在插件注册时调用，通过pluginmanager.add_hookspecs(module_or_class, prefix)来添加新的钩子。
+参数：
+* pluginmanager (_pytest.config.PytestPluginManager) – pytest的插件管理器
+`注意该钩子与hookwrapper=True不兼容`
+
+*pytest_configure(config)*
+允许插件和conftest文件执行初始化配置。
+命令行选项解析完成后，该钩子会被每一个插件和最初的conftest文件(root目录下的conftest?)的调用。
+这之后，该钩子会被其他import的conftest文件调用。
+`注意该钩子与hookwrapper=True不兼容`
+参数：
+* config (_pytest.config.Config) – pytest配置对象
+
+*pytest_unconfigure(config)*
+在测试进程退出前调用。
+参数：
+* config (_pytest.config.Config) – pytest配置对象
+
+*pytest_sessionstart(session)*
+该钩子在Session对象创建之后，collection和运行测试之前调用。
+参数：
+* session(_pytest.main.Session)- pytest session 对象
+
+*pytest_sessionfinish(session, exitstatus)*
+在所有测试完成后，在向系统返回退出状态前调用。
+参数：
+* session(_pytest.main.Session)- pytest session 对象
+* exitstatus(int) - pytest返回给系统的状态
+
+### 22.4.3 测试运行时的钩子
+所有运行时钩子都会接收一个pytest.Item对象。
+
+*pytest_runtestloop(session)*
+执行main runtest loop的时候调用(在collection完成之后)。
+参数：
+* session(_pytest.main.Session)- pytest session 对象
+
+*pytest_runtest_protocol(item, nextitem)*
+为指定的测试项实现runtest_setup/call/teardown协议，包含捕获异常以及调用报告钩子。
+参数：
+* item - 执行runtest协议的测试项
+* nextitem - 待调度的下一个测试项。该参数会被传递给pytest_runtest_teardown().
+返回值：
+* boolean 如果没有更多的钩子实现需要调用的话返回True
+
+*pytest_runtest_logstart(nodeid, location)*
+发出开始运行单个测试项的信号。
+该钩子在pytest_runtest_setup(), pytest_runtest_call() 和 pytest_runtest_teardown()之前调用。
+参数：
+* nodeid(str) - 测试项的完整id
+* location - 一个三元组(filename，linenum，testnum)
+
+*pytest_runtest_logfinish(nodeid, location)*
+发出单个测试项运行结束的信号。
+该钩子在pytest_runtest_setup(), pytest_runtest_call() 和 pytest_runtest_teardown()之后调用。
+参数：
+* nodeid(str) - 测试项的完整id
+* location - 一个三元组(filename，linenum，testnum)
+
+*pytest_runtest_setup(item)*
+在pytest_runtest_call(item)之前调用
+
+*pytest_runtest_call(item)*
+执行测试用例
+
+*pytest_runtest_teardown(item, nextitem)*
+在pytest_runtest_call(item)之后调用
+
+*pytest_runtest_makereport(item, call)*
+根据给定的pytest.Item和_pytest.runner.CallInfo返回一个_pytest.runner.TestReport对象。
+
+可以在_pytest.runner中查看这些钩子的默认实现来加深理解。
+
+### 22.4.4 Collection钩子
+
+*pytest_collection(session)*
+为整个测试执行collection规则。
+参数：
+* session(_pytest.main.Session)- pytest session 对象
+
+*pytest_ignore_collect(path, config)*
+返回True时会禁止在path目录下执行collection。在调用其他钩子前，会优先对所有文件及文件夹调用该钩子。
+参数：
+* path(str) - 待分析的目录
+* config(_pytest.config.Config) - pytest config对象
+
+*pytest_collect_directory(path, parent)*
+在遍历一个文件夹做collection之前调用
+参数：
+* path(str) - 待分析的目录
+
+*pytest_collect_file(path, parent)*
+根据path返回collection节点或者None。任何新的节点都必须有指定的parent。
+参数：
+* path(str) - 待collect的目录
+
+*pytest_pycollect_makeitem(collector, name, obj)*
+返回自定义的item/collector。 说白了，就是定义哪些文件可以作为测试对象。
+
+*pytest_generate_tests(metafunc)*
+生成对测试函数的(多个)参数化调用。
+
+*pytest_make_parametrize_id(config, val, argname)*
+根据val返回一个用于@pytest.mark.parametrize的字符串表达式。如果钩子无法解析val，返回None。
+
+参数：
+* config(_pytest.config.Config) - pytest config对象
+* val - 参数化的值
+* argname (str) – pytest自动生成的参数名
+
+collection完成后，可以使用下面的钩子修改项目顺序、删除或修改测试项目：
+*pytest_collection_modifyitems(session, config, items)*
+参数：
+* session(_pytest.main.Session)- pytest session 对象
+* config(_pytest.config.Config) - pytest config对象
+* items (List[_pytest.nodes.Item]) - 测试对象列表
+
+### 22.4.5 Reporting钩子
+
+*pytest_collectstart(collector)*
+collector开始做collection的时候调用。
+
+*pytest_itemcollected(item)*
+找到了一个测试项
+
+*pytest_collectreport(report)*
+collector完成collection的时候调用。
+
+*pytest_deselected(items)*
+通过关键字取消测试项时调用
+
+*pytest_report_header(config, startdir)*
+返回一个作为最终的终端输出的报告的header信息的字符串。
+参数：
+* config(_pytest.config.Config) - pytest config对象
+* startdir - 作为起始目录的py.path对象
+`注意，因为pytest的插件查找机制，该函数只应该在测试的root文件夹下的插件及conftest.py中实现`
+
+*pytest_report_collectionfinish(config, startdir, items)*
+3.2引入
+返回一个字符串或者字符串列表，用于在collection成功完成后显示。
+这里的字符串会在标准的"collected X items"之后显示。
+参数：
+* config(_pytest.config.Config) - pytest config对象
+* startdir - 作为起始目录的py.path对象
+* items - pytest待执行的测试项列表，这个列表不应该有任何改动
+
+*pytest_report_teststatus(report, config)*
+返回测试报告的分类/短字母/细节(没用过。。。。)。
+参数：
+* config(_pytest.config.Config) - pytest config对象
+
+*pytest_terminal_summary(terminalreporter, exitstatus, config)*
+向测试概要报告中增加一个分段。
+参数：
+* terminalreporter (_pytest.terminal.TerminalReporter) – 内部使用的终端测试报告对象
+* exitstatus (int) – 返回给操作系统的返回码
+* config(_pytest.config.Config) - pytest config对象
+
+*pytest_fixture_setup(fixturedef, request)*
+执行fixture的setup
+返回值为fixture函数的返回值。
+`如果fixture函数的返回值是None，那么该钩子函数的其他实现会被继续调用`
+
+*pytest_fixture_post_finalizer(fixturedef, request)*
+在fixture的teardown之后调用，但是在清理cache之前，所以该钩子中fixturedef.cached_result的结果依然可以访问。
+
+*pytest_warning_captured(warning_message, when, item)*
+pytest告警插件捕获到告警时调用。
+参数：
+* warning_message (warnings.WarningMessage) – 捕获的告警。
+* when (str) – 告警捕获的时间，可能值为：
+ - "config": pytest配置/初始化阶段
+ - "collect": 测试collection阶段
+ - "runtest": 测试运行阶段
+* item (pytest.Item|None) – *DEPRECATED强烈不推荐！！！*
+
+*pytest_runtest_logreport(report)*
+处理测试的setup/call/teardown各个阶段的测试报告时调用。
+
+*pytest_assertrepr_compare(config, op, left, right)*
+为某些类型自定义断言表达式
+返回失败的断言表达式的说明。 如果没有自定义，返回None，否则返回字符串列表。
+* config(_pytest.config.Config) - pytest config对象
+
+### 22.4.6 Debugging/Interaction钩子
+*pytest_internalerror(excrepr, excinfo)*
+内部发生错误时调用
+
+*pytest_keyboard_interrupt(excinfo)*
+键盘发生中断时调用
+
+*pytest_exception_interact(node, call, report)*
+在出现可能以交互方式处理的异常时调用。
+该钩子只有在发生非内部异常(比如skip.Exception就是内部异常)时调用
+
+*pytest_enter_pdb(config, pdb)*
+调用pdb.set_trace()时调用，可以用在插件中，用于在进入python调试器进入交互模式前做一些特殊处理。
+参数：
+* config(_pytest.config.Config) - pytest config对象
+* pdb(pdb.Pdb) - Pdb实例
+
+## 22.5 对象Objects
+没啥好翻译的。。。。当手册查吧
+
+## 22.6 特殊变量
+测试module中，一些全局变量会被特殊处理：
+### 22.6.1 pytest_plugins
+
+在测试modules或者conftest.py中用来注册全局的新增的插件。可以是一个字符串或者字符串序列：
+`pytest_plugins = "myapp.testsupport.myplugin"`
+`pytest_plugins = ("myapp.testsupport.tools", "myapp.testsupport.regression")`
+
+### 22.6.2 pytest_mark
+
+在测试modules用来新增全局的适用于所有函数及方法的marks。可以是一个mark或者marks序列：
+```
+import pytest
+pytestmark = pytest.mark.webtest
+```
+
+```
+import pytest
+pytestmark = (pytest.mark.integration, pytest.mark.slow)
+```
+
+### 22.6.3 PYTEST_DONT_REWRITE(module docstring)
+PYTEST_DONT_REWRITE可以在module的docstring中用于禁止断言重写。
+
+## 22.7 环境变量
+环境变量可以改变pytest的行为。
+
+### 22.7.1 PYTEST_ADDOPTS
+用于定义展示给用户的命令行。
+
+### 22.7.2 PYTEST_DEBUG
+当设置该变量时，pytest会打印tracing以及调试信息。
+
+### 22.7.3 PYTEST_PLUGINS
+使用逗号分割的列表，表示需要加载的插件：
+`export PYTEST_PLUGINS=mymodule.plugin,xdist`
+
+### 22.7.4 PYTEST_DISABLE_PLUGIN_AUTOLOAD
+当设置该变量了，禁止插件通过setuptools自动加载插件，仅允许加载显式声明的插件。
+
+### 22.7.5 PYTEST_CURRENT_TEST
+用户无需关心该变量，该变量是由pytest在内部用于设置当前测试的名称，以便其他进程可以检查。
+
+## 22.8 配置项
+内置的配置项可以位于pytest.ini/tox.ini/setup.cfg。所有配置项必须位于[pytest]段落中(setup.cfg中是在[tool:pytest])
+`注意：不推荐使用setup.cfg，可能会有问题`
+
+定义在文件中的配置项可以被命令行参数 -o/--override覆盖。格式为 name=value。示例如下：
+`pytest -o console_output_style=classic -o cache_dir=/tmp/mycache`
+
+*addopts*
+添加命令行参数。
+如下：在ini中配置：
+```
+# pytest.ini
+[pytest]
+addopts = --maxfail=2 -rf # 发生两次失败时退出测试并上报错误信息
+```
+此时执行 pytest test_hello.py实际上是执行的下面的命令：
+`pytest --maxfail=2 -rf test_hello.py`
+
+*cache_dir*
+3.2引入
+设置缓存插件的目录。默认位于根目录下的.pytest_cache。
+
+*confcutdir*
+...。。。》》》
+
+*console_output_style*
+3.3引入
+设置控制台输出格式：
+* classic: 经典pytest格式
+* progress: 类似pytest格式，带一个进度指示器
+* count: 通过显示完成的测试数来取代原有的百分比显示。
+默认是progress格式。
+按照下面的方式可以重设该格式：
+```
+# pytest.ini
+[pytest]
+console_output_style = classic
+```
+
+*doctest_encoding*
+3.1引入
+用于用docstring解码文本文件的默认编码
+
+*doctest_optionflags*
+标准doctest模块里的一个或者多个doctest的标志。
+
+*empty_parameter_set_mark*
+3.4引入
+允许在参数化中选择空参数集的操作：
+* skip - 空参数集时跳过测试(默认)
+* xfail - 空参数集时设置测试为xfail(run=False)
+* fail_at_collect - 空参数集时抛出异常
+```
+# pytest.ini
+[pytest]
+empty_parameter_set_mark = xfail
+```
+
+***
+注意新版本中有计划将默认值改为xfail，因为xfail看起来问题比较少。
+***
+
+*filterwarnings*
+3.1引入
+设置哪些告警会被显示。默认所有告警会在测试结束后显示。
+```
+# pytest.ini
+[pytest]
+filterwarnings =
+    error
+    ignore::DeprecationWarning
+```
+改配置是告诉pytest忽略所有deprecation告警，并将其他告警转换为error。
+
+*junit_family*
+*junit_suite_name*
+JUNIT。没用过
+
+*log_cli_date_format*
+3.3引入
+格式化控制台输出的log的时间戳格式：
+```
+[pytest]
+log_cli_date_format = %Y-%m-%d %H:%M:%S
+```
+
+*log_cli_format*
+3.3引入
+格式化控制台输出的log的格式：
+```
+[pytest]
+log_cli_format = %(asctime)s %(levelname)s %(message)s
+```
+
+*log_cli_level*
+3.3引入
+设置控制台输出的的log的最小的级别。可以是整数值或者level的名称
+```
+[pytest]
+log_cli_level = INFO
+```
+
+*log_date_format*
+3.3引入
+格式化log的时间戳格式：
+```
+[pytest]
+log_date_format = %Y-%m-%d %H:%M:%S
+```
+
+*log_file*
+3.3引入
+设置log的输出文件：
+```
+[pytest]
+log_file = logs/pytest-logs.txt
+```
+
+*log_file_date_format*
+3.3引入
+格式化输出到log文件中的log的时间戳格式：
+```
+[pytest]
+log_file_date_format = %Y-%m-%d %H:%M:%S
+```
+
+*log_file_format*
+3.3引入
+log文件中的log的格式：
+```
+[pytest]
+log_file_format = %(asctime)s %(levelname)s %(message)s
+```
+
+*log_file_level*
+3.3引入
+设置log文件中的log的最小的级别。可以是整数值或者level的名称
+```
+[pytest]
+log_file_level = INFO
+```
+
+*logformat*
+3.3引入
+log的格式：
+```
+[pytest]
+log_format = %(asctime)s %(levelname)s %(message)s
+```
+
+*log_level*
+3.3引入
+log的最小的级别。可以是整数值或者level的名称
+```
+[pytest]
+log_level = INFO
+```
+
+*log_print*
+3.3引入
+如果设置为False，会禁止显示失败的测试的log
+```
+[pytest]
+log_print = False
+```
+
+*markers*
+表示测试中可用的markers：
+```
+[pytest]
+markers = 
+    slow
+    serial
+```
+
+*minversion*
+指定pytest不能小于某个版本号：
+```
+# pytest.ini
+[pytest]
+minversion = 3.0 # will fail if we run with pytest-2.8
+```
+
+*norecursedirs*
+...
+
+*python_classes*
+...
+
+*python_files*
+...
+
+*python_functions*
+...
+
+*testpaths*
+2.8引入
+指定从根目录下的哪个目录来执行，用于加快寻找测试用例和避免跑一些不想跑的用例。
+```
+[pytest]
+testpaths = testing doc
+```
+pytest只会执行根目录下的testing和doc目录下的用例。
+
+*usefixtures*
+对所有测试函数生效的fixtures列表。定义在配置项中的fixture与在所有的函数上显式的标记@pytest.mark.usefixtures的效果是一样的：
+```
+[pytest]
+usefixtures =
+    clean_db
+```
+
+*xfail_strict*
+如果设置为True，原来那些被标记为@pytest.mark.xfail的实际上是通过的用例都会被标记为失败。
+```
+[pytest]
+xfail_strict = True
+```
