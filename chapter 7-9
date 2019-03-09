@@ -1,0 +1,207 @@
+# Chapter 7 猴子补丁/模拟模块或环境的行为
+有时我们需要修改函数的全局配置或者调用类似网络访问这些不容易测试的代码。monkeypatch可以用来安全的设置/删除一个属性，字典项或者环境变量，甚至可以改变import的路径sys.path. 参考monkeypatch blog post可以查看更多介绍信息及进展。
+## 7.1 MonkeyPatching函数
+如果需要阻止os.expanduser返回特定值，你可以在调用该函数前使用monkeypatch.setattr()来修改该函数的返回
+```
+# test_module.py
+import os.path
+def getssh():
+    return os.path.join(os.path.expanduser("~admin", '.ssh'))
+def test_mytest(monkeypatch):
+    def mockreturn(path):
+        return '/abc'
+    monkeypatch.setattr(os.path, 'expanduser', mockreturn)
+    x = getssh()
+    assert x == '/abc/.ssh'
+```
+这里对os.path.expanduser做了monkeypatch，然后调用的时候就会调用monkeypatch里定义的函数。当测试函数test_mytest结束，这个monkeypatch就会失效。
+## 7.2 禁止远程调用中"requests"
+如果需要在所有测试用例中禁止http库中的"requests"，可以按照方案：
+```
+# conftest.py
+import pytest
+@pytest.fixture(autouse=True)
+def no_requests(monkeypatch):
+    monkeypatch.delattr("requests.sessions.Session.request")
+```
+该fixture被设置为了autouse，这样所有测试函数都会将request.sessions.Session.request删除而导致所有的http requests返回失败。
+***
+注意，不建议对open/compile这些内置的函数做monkeypatch，这可能会导致ptest的内部异常。如果无法避免，使用--tb=native, --assert=plain以及--capture=no可能会有一些帮助，当然，不保证好使 ^_^。
+***
+***
+注意，对stdlib和一些第三方库使用monkeypatch可能会导致pytest的内部异常，因此推荐使用MonkeyPatch.context()来将作用域仅仅限制在你需要测试的代码块中
+***
+```
+import functools
+def test_partial(monkeypatch)
+    with monkeypatch.context() as m:
+        m.setattr(functools, "partial", 3)
+        assert functools.partial == 3
+```
+## 7.3 API
+参考MonkeyPatch的类实现
+
+# Chapter 8 临时文件/文件夹
+## 8.1 fixture: tmp_path
+3.9更新
+可以通过tmp_path来提供一个唯一的临时文件夹供函数调用。
+tmp_path是pathlib/pathlib2.Path的一个对象，使用方法如下：
+```
+# test_tmp_path.py
+import os
+CONTENT = u"content"
+def test_create_file(tmp_path):
+    d = tmp_path / "sub"
+    d.mkdir()
+    p = d / "hello.txt"
+    p.write_text(CONTENT)
+    assert p.read_text() == CONTENT
+    assert len(list(tmp_path.iterdir())) == 1
+    assert 0
+```
+运行该测试可以发现除了最后用来观察结果的assert 0是失败的，其他的步骤都是pass的。
+```
+$ pytest test_tmp_path.py
+=========================== test session starts ============================
+platform linux -- Python 3.x.y, pytest-4.x.y, py-1.x.y, pluggy-0.x.y
+cachedir: $PYTHON_PREFIX/.pytest_cache
+rootdir: $REGENDOC_TMPDIR, inifile:
+collected 1 item
+test_tmp_path.py F                                                  [100%]
+================================= FAILURES =================================
+_____________________________ test_create_file _____________________________
+tmp_path = PosixPath('PYTEST_TMPDIR/test_create_file0')
+    def test_create_file(tmp_path):
+        d = tmp_path / "sub"
+        d.mkdir()
+        p = d / "hello.txt"
+        p.write_text(CONTENT)
+        assert p.read_text() == CONTENT
+        assert len(list(tmp_path.iterdir())) == 1
+>       assert 0
+E       assert 0
+test_tmp_path.py:13: AssertionError
+========================= 1 failed in 0.12 seconds =========================
+```
+## 8.2 fixture: tmp_path_factory
+3.9更新
+tmp_path_factory是一个session作用域的fixture，可以在任意的fixture或者测试用例中来创建任何你想要的临时文件夹。
+该fixture被用于取代tmpdir_factory，返回一个pathlib.Path的实例。
+## 8.3 fixture: tmpdir
+tmpdir可以为测试用例提供一个唯一的临时文件夹，这个文件夹位于base temporary directory (8.5).
+tmpdir是一个py.path.local对象，可以使用os.path的功能.示例如下：
+```
+# test_tmpdir.py
+import os
+def test_create_file(tmpdir):
+    p = tmpdir.mkdir("sub").join("hello.txt")
+    p.write("content")
+    assert p.read() == "content"
+    assert len(tmpdir.listdir()) == 1
+    assert 0
+```
+运行该测试可以发现除了最后用来观察结果的assert 0是失败的，其他的步骤都是pass的。
+```
+$ pytest test_tmpdir.py
+=========================== test session starts ============================
+platform linux -- Python 3.x.y, pytest-4.x.y, py-1.x.y, pluggy-0.x.y
+cachedir: $PYTHON_PREFIX/.pytest_cache
+rootdir: $REGENDOC_TMPDIR, inifile:
+collected 1 item
+test_tmpdir.py F                                                  [100%]
+================================= FAILURES =================================
+_____________________________ test_create_file _____________________________
+tmpdir = local('PYTEST_TMPDIR/test_create_file0')
+    def test_create_file(tmpdir):
+        p = tmpdir.mkdir("sub").join("hello.txt")
+        p.write("content")
+        assert p.read() == "content"
+        assert len(tmpdir.listdir()) == 1
+>       assert 0
+E       assert 0
+test_tmpdir.py:7: AssertionError
+========================= 1 failed in 0.12 seconds =========================
+```
+## 8.4 fixture: tmpdir_factory
+2.8更新
+tmp_factory是一个session作用域的fixture，可以在任意的fixture或者测试用例中来创建任何你想要的临时文件夹。
+比如，假设你的测试套需要在磁盘上用程序生成一个很大的文件。你无需为每个测试用例都用tmpdir生成一遍，通过tmp_factory在整个session只生成一次即可：
+```
+# conftest.py
+import pytest
+@pytest.fixture(scope="session")
+def image_file(tmpdir_factory):
+    img = compute_expensive_image()
+    fn = tmpdir_factory.mktemp("data").join("img.png")
+    img.save(str(fn))
+    return fn
+# test_image.py
+def test_histogram(image_file):
+    img = load_image(image_file)
+```
+## 8.5 默认的临时文件夹
+pytest创建的临时文件夹默认情况下是系统临时文件夹的一个子文件夹。一般会以pytest-开头，后面追加一串随测试运行增加的数字。同时，超过3个的临时目录会被删除。
+可以通过下面的方式复写临时文件夹的配置：
+`pytest --basetemp=mydir`
+在本机进行分布式的测试时，pytest负责为各个子进程配置临时文件夹目录，保证每个进程的临时数据都落地在独立的临时文件夹中。
+# Chapter 9 捕获 stdout/stderr 输出
+## 9.1 默认的stdout/stderr/stdin的捕获
+测试过程中所有输出到stdout和stderr的信息都会被捕获，如果测试或者配置过程失败了，当前所有捕获的输出通常会和失败的traceback一起展示出来。（可以通过--show-capture命令行选项来进行配置）
+另外，stdin被设置为null，所以不能从stdin进行读入，因为在运行自动化测试的时候，很少会要求有交互式的输入。
+默认的捕获策咯时截取写到底层文件描述符的数据，所以即使是子进程的测试输出也可以被捕获到。
+## 9.2 设置捕获策略/禁止捕获
+pytest执行捕获有两种方式：
+* 默认的文件描述符级别的捕获：捕获所有写入操作系统文件描述符1和2的数据
+* sys级别的捕获：仅捕获写入到python的文件系统sys.stdout和sys.stderr的数据。不会捕获写入到文件描述符的数据
+你可以通过命令行的参数来选择捕获策略：
+```
+pytest -s            #禁止所有捕获
+pytest --capture=sys #用内存文件取代sys.stdout/stderr
+pytest --capture=fd  #将文件描述符指针1和2指向临时文件
+```
+## 9.3 利用print语句调试
+pytest的默认的输出策咯的好处是可以使用print语句来进行调试：
+```
+# test_module.py
+def setup_function(function):
+    print("setting up %s" % function)
+def test_func1():
+    assert Ture
+def test_func2():
+    assert False
+```
+运行该module，结果中精确的打印出来了失败函数，而另外一个通过的函数的输出则是隐藏的。
+```
+$ pytest
+=========================== test session starts ============================
+platform linux -- Python 3.x.y, pytest-4.x.y, py-1.x.y, pluggy-0.x.y
+cachedir: $PYTHON_PREFIX/.pytest_cache
+rootdir: $REGENDOC_TMPDIR, inifile:
+collected 2 items
+test_module.py .F                                               [100%]
+================================= FAILURES =================================
+________________________________ test_func2 ________________________________
+    def test_func2():
+>       assert False
+E       assert False
+test_module.py:9: AssertionError
+-------------------------- Captured stdout setup ---------------------------
+setting up <function test_func2 at 0xdeadbeef>
+==================== 1 failed, 1 passed in 0.12 seconds ====================
+```
+## 9.4 在测试函数中访问捕获的输出
+capsys,capsysbinary, capfd和capfdbinary这些fixtures允许在测试运行期间访问stdout/stderr的标准输出。下面是一个示例：
+```
+def test_myoutput(capsys): # 也可以使用capfd
+    print("hello")
+    sys.stderr.write("world\n")
+    captured = capsys.readouterr()
+    assert captured.out == "hello\n"
+    assert captured.err == "world\n"
+    print("next")
+    captured = capsys.readouterr()
+    assert captured.out == "next\n"
+```
+readouterr()可以得到目前为止的输出快照，输出的捕获依然会继续。当测试完成后，输出stream会被重置。使用capsys的方式可以让你从必须关注如何配置/重置输出stream中解放出来。
+capfd可以用在需要在文件描述符级别捕获输出的场景，调用的接口是相同的，但是允许从库或者子进程捕获那些直接写入操作系统的输出streams的输出(FD1和FD2).
+还有一串更新历史。。。。lazy....
