@@ -1,0 +1,140 @@
+# Chapter 1 安装和启动
+
+pytest作为一个测试框架，可以非常简单的建立易用性好，扩展性强的测试集。这些测试因为避免了大量的样板代码，所以可读性非常高。
+你可以花费一点时间通过一个unittest或者略复杂的函数测试来验证你的应用程序或者库。
+
+### 1.1 安装pytest
+1. 在你的python环境下运行下面的命令即可安装pytest
+```
+pip install -U pytest
+```
+2. 检查你安装的pytest的版本信息是否正确：
+```
+$ pytest --version
+This is pytest version 4.2.1, imported from /Users/david/Downloads/myPython/python3-venv/lib/python3.7/site-packages/pytest.py
+```
+### 1.2 创建你的第一个测试
+创建一个只有4行代码的简单函数：
+```
+# test_sample.py 的内容
+def func(x):
+    return x + 1
+def test_answer():
+    assert func(3) == 5
+```
+现在，你可以在test_sample.py的同级目录下直接执行pytest，结果如下：
+```
+$ pytest
+============================= test session starts ==============================
+platform darwin -- Python 3.7.2, pytest-4.2.1, py-1.7.0, pluggy-0.8.1
+rootdir: $REGENDOC_TMPDIR, inifile:
+collected 1 item                                                               
+
+test_sample.py F                                                         [100%]
+
+=================================== FAILURES ===================================
+_________________________________ test_answer __________________________________
+
+    def test_answer():
+>       assert func(3) == 5
+E       assert 4 == 5
+E        +  where 4 = func(3)
+
+test_sample.py:4: AssertionError
+=========================== 1 failed in 0.07 seconds ===========================
+```
+这个测试的结果是失败的，因为func(3)的返回值不是5.
+
+* * *
+**注意：**你可以使用*assert*来声明测试的期望结果。(后面一句是说这里比Junit好，没用过JUnit。。。)
+* * *
+
+### 1.3 运行多个测试
+
+pytest会运行当前目录及子目录下所有以 test_\*.py 和 \*_test.py 命名的文件。文件匹配方式遵循[Standard test discovery rules](ToBeAdded)
+
+### 1.4 判断是否发生了指定的异常
+使用*raises*可以判断代码是否抛出了异常：
+```
+# test_sysexit.py 的内容
+import pytest
+def f():
+	raise SystemExit(1)
+
+def test_mytest():
+	with pytest.raises(SystemExit):
+		f()
+```
+使用"quiet"模式来执行这个测试：
+```
+$ pytest -q test_sysexit.py 
+.                                                                        [100%]
+1 passed in 0.03 seconds
+```
+
+### 1.5 将多个测试用例放在一个class中
+当你需要开发多个测试用例的时候，你可能需要将他们放在同一个class中，*pytest*可以很简单的创建包含多个测试用例的class：
+```
+# test_class.py的内容
+class TestClass(object):
+	def test_one(self):
+		x = "this"
+		assert 'h' in x
+
+	def test_two(self):
+		x = "hello"
+		assert hasattr(x, 'check')
+```
+*pytest*根据[Conventions for Python test discovery](ToBeAdded)查找所有的测试用例，所以可以找到所有以**test_**开头的测试函数。我们可以通过文件名来直接运行整个模块：
+```
+$ pytest -q test_class.py
+.F                                                                       [100%]
+=================================== FAILURES ===================================
+______________________________ TestClass.test_two ______________________________
+
+self = <test_class.TestClass object at 0x10858fc18>
+
+    def test_two(self):
+    	x = "hello"
+>   	assert hasattr(x, 'check')
+E    AssertionError: assert False
+E     +  where False = hasattr('hello', 'check')
+
+test_class.py:8: AssertionError
+1 failed, 1 passed in 0.07 seconds
+```
+第一个测试用例passed，第二个测试用例failed。你可以很直观的观察到测试用例中进行判断的中间值，这可以帮助理解测试用例失败的原因。
+
+### 1.6 为测试创建唯一的临时文件夹
+*pytest* 提供 [Builtin fixtures/function arguments](ToBeAdded)来创建任意的资源，比如一个具有唯一的临时文件夹：
+```
+# test_tmpdir.py的内容
+def test_needsfiles(tmpdir):
+	print(tmpdir)
+	assert 0
+```
+如果函数的签名中(函数签名包括函数的参数和返回值，以及参数的封送顺序等等)包含参数**tmpdir**，**pytest**就会在执行测试用例之前查找并调用特定的fixture创建所需资源。在本例中，**pytest**会创建一个unique-per-test-invocation临时文件夹：
+```
+$ pytest -q test_tmpdir.py 
+F                                                                                                                                 [100%]
+=================================== FAILURES ===================================
+______________________________ test_needsfiles ______________________________
+
+tmpdir = local('/private/var/folders/st/05jlyljx7nqb26zdr8nv17dw0000gn/T/pytest-of-david/pytest-0/test_needsfiles0')
+
+    def test_needsfiles(tmpdir):
+    	print(tmpdir)
+>   	assert 0
+E    assert 0
+
+test_tmpdir.py:3: AssertionError
+------------------------- Captured stdout call -------------------------
+/private/var/folders/st/05jlyljx7nqb26zdr8nv17dw0000gn/T/pytest-of-david/pytest-0/test_needsfiles0
+1 failed in 0.07 seconds
+```
+关于**tmpdir**的更多信息请参考[Temporary directories and files](ToBeAdded)
+通过下面的命令可以查看所有内置的**pytest fixture**：
+`pytest --fixtures`
+
+### 1.7 扩展阅读
+略！
