@@ -1,0 +1,504 @@
+# Chapter 10 捕获告警
+
+3.1更新
+
+从V3.1开始，pytest可以自动的捕获测试过程中的告警并在测试完成后显示出来。
+```
+# test_show_warnings.py
+import warnings
+
+def api_v1():
+    warnings.warn(UserWarning("api v1, should use functions from v2"))
+    return 1
+
+def test_one()
+    assert api_v1() == 1
+```
+运行结果如下：
+```
+$ pytest test_show_warnings.py
+=========================== test session starts ============================
+platform linux -- Python 3.x.y, pytest-4.x.y, py-1.x.y, pluggy-0.x.y
+cachedir: $PYTHON_PREFIX/.pytest_cache
+rootdir: $REGENDOC_TMPDIR, inifile:
+collected 1 item
+
+test_show_warnings.py .                                             [100%]
+============================= warnings summary =============================
+test_show_warnings.py::test_one
+  $REGENDOC_TMPDIR/test_show_warnings.py:4: UserWarning: api v1, should use functions from v2
+    warnings.warn(UserWarning("api v1, should use functions from v2"))
+
+-- Docs: https://docs.pytest.org/en/latest/warnings.html
+=================== 1 passed, 1 warnings in 0.12 seconds ===================
+```
+
+-W参数可以用来控制是否显示告警，甚至可以控制是否将告警转换为Error：
+```
+$ pytest -q test_show_warnings.py -W error::UserWarning
+F                                                                    [100%]
+================================= FAILURES =================================
+_________________________________ test_one _________________________________
+
+    def test_one():
+>       assert api_v1() == 1
+test_show_warnings.py:8:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    def api_v1():
+>       warnings.warn(UserWarning("api v1, should use functions from v2"))
+E       UserWarning: api v1, should use functions from v2
+
+test_show_warnings.py:4: UserWarning
+1 failed in 0.12 seconds
+```
+在pytest.ini中使用filterwarnings也可以控制告警。比如，下面的配置会忽略所有的用户告警，但是会将其他的所有告警都转换成error：
+```
+[pytest]
+filterwarnings = 
+    error
+    ignore::UserWarning
+```
+当一个告警与多个配置匹配的话，那么放在最后的配置项生效。
+-W参数和配置文件中的filterwarnings都是基于python原生的-W的选项和warnings.simplefilter，请参考python文档获取更多的示例和高级用法。
+
+## 10.1 @pytest.mark.filterwarnings
+3.2更新
+可以使用@pytest.mark.filterwarnings来为一个特定的测试项添加告警筛选器，这可以让你更简单的控制哪些告警应该被捕获：
+```
+import warnings
+
+def api_v1():
+    warnings.warn(UserWarning("api v1, should use functions from v2"))
+    return 1
+
+@pytest.mark.filterwarnings("ignore:api v1")
+def test_one()
+    assert api_v1() == 1
+```
+使用marker定义的筛选器的优先级高于命令行传递的参数以及在ini中的告警配置。
+你可以将filterwarnings作为筛选器的一个mark，用于所有类的测试。或者通过设置pytestmark变量来将筛选器用于某个模块的所有测试：
+```
+# 将本模块中的所有告警转换成error
+pytestmark = pytest.mark.filterwarnings("error")
+```
+## 10.2 禁止告警信息
+虽然并不推荐，但是你依然可以使用--disable-warnings命令行参数去除测试输出中的所有的告警信息的显示。
+
+## 10.3 禁止捕获告警
+可以在pytest.ini中如下配置来完全禁止捕获告警：
+```
+[pytest]
+addopts = -p no:warnings
+```
+或者在命令行中使用 -p no:warnings。这在你需要处理外部系统的告警时可能是会被用到的。（防止跟你自己的告警混淆？？）
+
+## 10.4 废弃告警和将废弃告警
+3.8引入，3.9更新
+默认情况下pytest会显示DeprecationWarning以及PendingDeprecationWarning这两类来自用户的代码或者第三方库的告警。这可以帮助用户的代码保持整洁并且避免了当移除这些废弃内容时破坏了原有的代码。
+有时你不想再显示那些无法控制的第三方的废弃告警，你可以在ini或者marks中使用告警筛选器来进行过滤，如下：
+```
+[pytest]
+filterwarnings = 
+    ignore:.*U.*mode is deprecated:DeprecationWarning
+```
+这会忽略能够匹配所给的正则表达式的DeprecationWarning。
+***
+注意，如果告警是在python解释器层面定义的，使用环境变量PYTHONWARNINGS或者命令行参数-W，pytest则默认不会配置任何筛选器(没看懂。。。)
+***
+## 10.5 确保代码会触发废弃告警
+你也可以通过调用一个全局的函数来检查是否确实有DeprecationWarning或者PendingDeprecationWarning：
+```
+import pytest
+
+def test_global():
+    pytest.deprecated_call(myfunction, 17)
+```
+默认情况下，DeprecationWarning和PendingDeprecationWarning不会被pytest.warns或者recwarn捕获，因为其内部有默认的Python告警筛选机制。如果你想要在你的代码中记录这些告警，使用warnings.simplefilter('always'):
+```
+import warnings
+import pytest
+
+def test_deprecation(recwarn):
+    warnings.simplefilter('always')
+    warnings.warn("deprecated", DeprecationWarning)
+    assert len(recwarn) == 1
+    assert recwarn.pop(DeprecationWarning)
+```
+你也可用将其作为上下文管理器来使用：
+```
+def test_global():
+    with pytest.deprecated_call():
+        myobject.deprecated_method()
+```
+##10.6 使用告警函数来检查告警
+2.8引入
+你可以使用pytest.warns来检查是否有特定的告警，用法类似于raises：
+```
+import warnings
+import pytest
+
+def test_warning():
+    with pytest.warns(UserWarning):
+        warnings.warn("my warning", UserWarning)
+```
+如果没有告警，那么测试就会失败。我们也可以使用match关键字来检查异常中是否包含特定的字符串:
+```
+>>> with warns(UserWarning, match='must be 0 or None'):
+...     warnings.warn("value must be 0 or None", UserWarning)
+>>> with warns(UserWarning, match=r'must be \d+$'):
+...     warnings.warn("value must be 42", UserWarning)
+>>> with warns(UserWarning, match=r'must be \d+$'):
+...     warnings.warn("this is not here", UserWarning)
+Traceback (most recent call last):
+    ...
+Failed: DID NOT WARN. No warnings of type ...UserWarning... was emitted...
+```
+也可以使用函数或者代码字符串来调用pytest.warns
+```
+pytest.warns(expected_warning, func, *args, **kwargs)
+pytest.warns(expected_warning, "func(*args, **kwargs)")
+```
+该函数也会返回所有抛出的告警信息(warnings.WarningMessage对象)列表，你可以在其中检索你关心的额外信息：
+```
+with pytest.warns(RuntimeWarning) as record:
+    warnings.warn("another warning", RuntimeWarning)
+
+# 检查是否只有一个告警
+assert len(record) == 1
+# 检查告警信息是否匹配
+assert record[0].message.args[0] == "another warning"
+```
+你也可以通过下面要讲的recwarn fixture来检查告警的详细信息。
+***
+注意：DeprecationWarning和PendingDeprecationWarning的处理并不一样，参考10.5
+***
+
+## 10.7 告警的记录
+你可以通过pytest.warns或者fixture：recwarn来记录告警。
+如果使用pytest.warns来记录告警并且不想产生任何断言，那么使用None作为参数传入：
+```
+with pytest.warns(None) as record:
+    warnings.warn("user", UserWarning)
+    warnings.warn("runtime", RuntimeWarning)
+
+assert len(record) == 2
+assert str(record[0].message == "user")
+assert str(record[1].message == "runtime")
+```
+
+fixture: recwarn会将整个函数产生的告警都记录下来：
+```
+import warnings
+
+def test_hello(recwarn):
+    warnings.warn("hello", UserWarning)
+    assert len(recwarn) == 1
+    w = recwarn.pop(UserWarning)
+    assert issubclass(w.category, UserWarning)
+    assert str(w.message) == "hello"
+    assert w.filename
+    assert w.lineno
+```
+recwarn和pytest.warns返回的是同样的告警记录列表：一个WarningsRecorder的实例。你可以通过迭代器依次访问这个实例里的成员，使用len可以得到记录的告警的数量，也可以直接通过index来访问某一个具体的告警。
+
+## 10.8 自定义失败信息
+告警信息的结果处理使得在没有告警上报或其他需要的情况下，我们可以自定义一条测试失败的信息：
+```
+def test():
+    with pytest.warns(Warning) as record:
+        f()
+        if not record:
+            pytest.fail("Expected a warning")
+```
+当f()没有任何告警时，not record的值将是True,这时你可以通过调用pytest.fail来自定义一条错误信息。
+
+## 10.9 pytest内部告警
+3.8引入
+pytest在某些情况下可能会产生自己的告警， 比如： 错误的用法或者废弃的特性的使用。
+举个例子，如果一个类与python_classes匹配但是同时又定义了一个__init__构造函数，pytest会触发一个告警，因为这会导致class不能实例化（Why??）：
+```
+# test_pytest_warnings.py
+class Test:
+    def __init__(self):
+        pass
+
+    def test_foo(self):
+        assert 1 == 1
+```
+
+```
+$ pytest test_pytest_warnings.py -q
+============================= warnings summary =============================
+test_pytest_warnings.py:1
+    $REGENDOC_TMPDIR/test_pytest_warnings.py:1: PytestWarning: cannot collect test class 'Test' because it has a __init__ constructor
+        class Test:
+
+-- Docs: https://docs.pytest.org/en/latest/warnings.html
+1 warnings in 0.12 seconds
+```
+
+# Chapter 11 这章不想搞，先不管了。。。
+
+# Chapter 12 Skip和xfail: 处理那些不会成功的测试用例
+你可以对那些在某些特定平台上不能运行的测试用例或者你预期会失败的测试用例做一个标记，这样pytest在提供测试报告时可以做对应的处理以保持整个测试套的结果都是green的(一般都用绿色表示测试通过)
+
+skip表示在满足某些情况下该测试用例是通过的，否则这个测试用例应该被跳过不执行。比较常见的例子是测试用例在windows平台下执行在非windows平台下不执行，或者比如数据库等外部资源不能访问时不执行某些测试用例。
+xfail表示期望某个测试用例因为某些原因是失败的。一个常见的例子是一个新特性还没有实现或者bug还没有被修复。如果该测试用例已经被定义为pytest.mark.xfail但是又测试通过了，那么在最后的测试报告中会被标记为xpass。
+
+pytest单独统计skip和xfail的测试用例，为了保持整洁，默认情况下测试报告中不会显示skipped/xfailed的测试用例的信息。你可以使用-r选项来查看相关的详细信息：
+`pytest -rxXs  # r:显示详细信息 x: xfailed, X: xpassed, s: skipped`
+你可以在pytest -h中查看-r的更多帮助。
+
+## 12.1 跳过测试函数
+2.9引入
+最简单的方式就是使用skip装饰器：
+```
+@pytest.mark.skip(reason="no way of currently testing this")
+def test_the_unknown():
+    ...
+```
+也可以在代码执行过程中直接调用pytest.skip(reason)来强制跳过：
+```
+def test_function():
+    if not valid_config():
+        pytest.skip("unsupported configuration")
+```
+在你不知道具体的skip的条件时，这种强制跳过的方法是很有用的。
+
+还可以使用pytest.skip(reason, allow_module_level=True)来跳过整个module：
+```
+import sys
+import pytest
+
+if not sys.platform.startswith("win"):
+    pytest.skip("skipping windows-only tests", allow_module_level=True)
+```
+
+### 12.1.1 skipif
+2.0引入
+你可以使用skipif来在某些条件下跳过测试。
+下面是一个在检查python的版本是否高于3.6的示例：
+```
+import sys
+@pytest.mark.skipif(sys.version_info < (3, 6), reason="require python3.6 or higher")
+def test_function():
+    ...
+```
+在查找用例的时候，如果判断skipif的条件是True，该用例会被跳过，如果使用-rs参数，详细的reason会在测试报告中体现。
+你可以在各个模块中共享skipif标记，比如有下面的模块定义：
+```
+# test_mymodule.py
+import mymodule
+minversion = pytest.mark.skipif(mymodule.__versioninfo__ < (1,1), reason="at least mymodule-1.1 required")
+
+@minversion
+def test_function():
+    ...
+```
+你可以在其他模块中import这个标记：
+```
+# test_myothermodule.py
+from test_mymodule import minversion
+
+@minversion
+def test_anotherfunction():
+    ...
+```
+在大型项目中，一般会将这些共享的标记放在同一个文件里供其他模块调用。
+当然，你也可以使用条件字符串来代替布尔结果，但是这样因为一些兼容性的原因在模块间就不是很方便共享。
+
+### 12.1.2 跳过模块或者class中的所有的测试
+你可以在class上使用skipif标记：
+```
+@pytest.mark.skipif(sys.platform == "win32", reason="does not run on windows")
+class TestPosixCalls(object):
+    def test_function(self):
+        "will not be setup or run under 'win32' platform"
+```
+如果满足条件，这个标记会跳过这个class下面的所有测试函数。
+如果你要跳过模块中的所有测试，你需要使用全局的pytestmark：
+```
+# test_module.py
+pytestmark = pytest.mark.skipif(...)
+```
+当一个测试函数有多个skipif装饰器时，任何一个装饰器满足条件时都会跳过该测试。
+
+### 12.1.3 跳过文件或文件夹
+有时你可能需要跳过一个完整的文件或者文件夹，比如依赖python特定版本的某些特性或者你不想pytest跑的测试代码。这种情况下你需要在collection阶段就将这些文件排除掉。
+参考Chapter 27的 Customizing test collection。
+
+### 12.1.4 跳过因为import的依赖错误的用例
+你可以在模块中或者测试用例中使用下面的方式：
+`docutils = pytest.importorskip("docutils")`
+如果docutils无法导入，这里就会跳过所有的测试，你可以基于某个库的版本号来进行判断：
+`docutils = pytest.importorskip("docutils", minversion="0.3")`
+这里的版本号是从模块的__version__属性里读出来的。
+
+### 12.1.5 总结
+1. 无条件的跳过模块中的所有测试：
+`pytestmark = pytest.mark.skip("all tests still WIP")`
+2. 有条件的跳过模块中的所有测试：
+`pytestmark = pytest.mark.skipif(sys.platform == "win32", "tests for linux only")`
+3. 当import错误时，跳过模块中的所有测试：
+`pexpect = pytest.importorskip("pexpect")`
+
+## 12.2 XFail：标记测试用例是期望失败的
+你可以使用xFail来标记你期望某个测试用例是失败的：
+ ```
+ @pytest.mark.xfail
+ def test_function():
+    ...
+ ```
+ 该测试用例会被正常执行，但是当它失败的时候不会有traceback。在测试报告中，该测试会被列举在“期望失败的用例”（XFAIL）或者“不应该通过的用例”（XPASS）里。
+ 你也可以在测试中强制的指定一个测试用例为XFAIL：
+ ```
+ def test_function():
+    if not vaild_config():
+        pytest.xfail("failing configuration (but should work)")
+ ```
+ 这会无条件的使得test_function的结果是XFAIL。注意与marker的方式不一样的是，这里pytest.xfail后不会再有代码被执行，因为这里会立刻在内部抛出一个异常。
+ 
+ ### 12.2.1 strict参数
+ 2.9引入
+ XFAIL和XPASS的测试用例都不会导致整个测试套失败，除非指定了strict参数为True。
+ ```
+ @pytest.mark.xfail(strict=True)
+ def test_function():
+    ...
+ ```
+ 这个参数会让XPASS的结果在测试报告中变成失败。
+ 也可以在ini中通过xfail_strict来指定strict参数：
+ ```
+ [pytest]
+ xfail_strict=true
+ ```
+ ### 12.2.2 reason参数
+ 如同skipif一样，你可以标记你在某个特定平台上期望测试是失败的。
+ ```
+ @pytest.mark.xfail(sys.version_info >= (3, 6), reason="Python3.6 api changes")
+ def test_function():
+    ...
+ ```
+ ### 12.2.3 raises参数
+ 如果你想更清楚的表达测试为什么失败，你可以用raises参数指定一个或者一组异常：
+ ```
+ @pytest.mark.xfail(raises=RuntimeError)
+ def test_function():
+    ...
+ ```
+ 如果该测试函数并不是因为raises中指定的异常导致的失败，那么该测试函数在测试结果中就会被标记为正常的失败，如果是raises中的异常导致的失败，那么就会被标记为预期的失败。
+ 
+ ### 12.2.4 run 参数
+ 如果一个测试应该被标记为xfail并且预期是失败的，但是你又暂时不想运行这个测试用例，那么你可以将run参数设置为False：
+ ```
+ @pytest.mark.xfail(run=False)
+ def test_function():
+    ...
+ ```
+ 这个特性在xfail的case发生问题（比如crash）了，后面准备进行处理的时候有用处。
+ 
+ ###12.2.5 忽略xfail
+ 在命令行中指定下面的参数：
+ `pytest --runxfail`
+ 可以强制让xfail和pytest.xfail失效。
+ 
+ ### 12.2.6 范例
+ 下面是一个xfail的用法的例子：
+ ```
+ import pytest
+ 
+ xfail = pytest.mark.xfail
+ 
+ @xfail
+ def test_hello():
+    assert 0
+    
+ @xfail(run=False)
+ def test_hello2():
+    assert 0
+    
+ @xfail("hasattr(os, 'sep')")
+ def test_hello3():
+    assert 0
+    
+ @xfail(reason="bug 110")
+ def test_hello4():
+    assert 0
+    
+ @xfail('pytest.__version__[0] != "17"')
+ def test_hello5():
+    assert 0
+    
+ def test_hello6():
+    pytest.xfail("reason")
+    
+ @xfail(raise=IndexError)
+ def test_hello7():
+    x = []
+    x[1] = 1
+ ```
+ 带参数report-on-xfail来运行这个示例：
+ ```
+ example $ pytest -rx xfail_demo.py
+=========================== test session starts ============================
+platform linux -- Python 3.x.y, pytest-4.x.y, py-1.x.y, pluggy-0.x.y
+cachedir: $PYTHON_PREFIX/.pytest_cache
+rootdir: $REGENDOC_TMPDIR/example, inifile:
+collected 7 items
+xfail_demo.py xxxxxxx [100%]
+========================= short test summary info ==========================
+XFAIL xfail_demo.py::test_hello
+XFAIL xfail_demo.py::test_hello2
+    reason: [NOTRUN]
+XFAIL xfail_demo.py::test_hello3
+    condition: hasattr(os, 'sep')
+XFAIL xfail_demo.py::test_hello4
+    bug 110
+XFAIL xfail_demo.py::test_hello5
+    condition: pytest.__version__[0] != "17"
+XFAIL xfail_demo.py::test_hello6
+    reason: reason
+XFAIL xfail_demo.py::test_hello7
+
+======================== 7 xfailed in 0.12 seconds =========================
+```
+
+## 12.3 参数化Skip/xfail
+在参数化中可以将skip/xfail作为一个独立的实例当作marker使用：
+```
+import pytest
+
+@pytest.mark.parametrize(
+    ("n", "expected"),
+    [
+        (1, 2),
+        pytest.param(1, 0, marks=pytest.mark.xfail),
+        pytest.param(1, 3, marks=pytest.mark.xfail(reason="some bug")),
+        (2, 3),
+        (3, 4),
+        (4, 5),
+        pytest.param(10 ,11, marks=pytest.mark.skipif(sys.version_info >= (3, 0), reason="py2k")),
+    ],
+)
+
+def test_increment(n, expected):
+    assert n + 1 == expected
+```
+带rx参数运行结果如下：
+```
+$ pytest -rx test_example.py 
+============================= test session starts ==============================
+platform darwin -- Python 3.7.2, pytest-4.2.1, py-1.7.0, pluggy-0.8.1
+rootdir: /Users/david/Downloads/myPython/python3-venv, inifile:
+collected 7 items                                                              
+
+testType.py .xx...s                                                      [100%]
+=========================== short test summary info ============================
+XFAIL testType.py::test_increment[1-0]
+XFAIL testType.py::test_increment[1-3]
+  some bug
+
+================ 4 passed, 1 skipped, 2 xfailed in 0.07 seconds ================
+
+```
