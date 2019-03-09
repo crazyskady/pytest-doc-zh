@@ -1,0 +1,353 @@
+# Chapter 13 参数化
+pytest有如下几种参数化的方式：
+* pytest.fixture()可以对测试函数进行参数化
+* @pytest.mark.parametrize允许对测试函数或者测试类定义多个参数和fixtures的集合
+* pytest_generate_tests允许自定义参数化的扩展功能
+
+## 13.1 @pytest.mark.parametrize: 参数化测试函数
+2.2引入，2.4改进
+内置的pytest.mark.parametrize装饰器可以用来对测试函数进行参数化处理。下面是一个典型的范例，检查特定的输入所期望的输出是否匹配：
+```
+# test_expectation.py
+import pytest
+@pytest.mark.parametrize("test_input, expected", [("3+5", 8), ("2+4", 6), ("6*9", 42),])
+def test_eval(test_input, expected):
+    assert eval(test_input) == expected
+```
+装饰器@parametrize定义了三组不同的(test_input, expected)数据，test_eval则会使用这三组数据执行三次：
+```
+$ pytest
+=========================== test session starts ============================
+platform linux -- Python 3.x.y, pytest-4.x.y, py-1.x.y, pluggy-0.x.y
+cachedir: $PYTHON_PREFIX/.pytest_cache
+rootdir: $REGENDOC_TMPDIR, inifile:
+collected 3 items
+
+test_expectation.py ..F                                            [100%]
+
+================================= FAILURES =================================
+____________________________ test_eval[6*9-42] _____________________________
+test_input = '6*9', expected = 42
+    @pytest.mark.parametrize("test_input,expected", [
+        ("3+5", 8),
+        ("2+4", 6),
+        ("6*9", 42),
+    ])
+    def test_eval(test_input, expected):
+>       assert eval(test_input) == expected
+E       AssertionError: assert 54 == 42
+E       + where 54 = eval('6*9')
+
+test_expectation.py:8: AssertionError
+==================== 1 failed, 2 passed in 0.12 seconds ====================
+```
+该示例中，只有一组数据是失败的。通常情况下你可以在traceback中看到作为函数参数的input和output。
+注意你也可以对模块或者class使用参数化的marker来让多个测试函数在不同的测试集下运行。
+你也可以对参数集中的某个参数使用mark，比如下面使用了内置的mark.xfail：
+```
+# test_exception.py
+import pytest
+@pytest.mark.parametrize("test_input, expected", [("3+5", 8), ("2+4", 6), ("6*9", 42, marks=pytest.mark.xfail),])
+def test_eval(test_input, expected):
+    assert eval(test_input) == expected
+```
+运行结果如下：
+```
+$ pytest
+=========================== test session starts ============================
+platform linux -- Python 3.x.y, pytest-4.x.y, py-1.x.y, pluggy-0.x.y
+cachedir: $PYTHON_PREFIX/.pytest_cache
+rootdir: $REGENDOC_TMPDIR, inifile:
+collected 3 items
+
+test_expectation.py ..x                                             [100%]
+
+=================== 2 passed, 1 xfailed in 0.12 seconds ====================
+
+```
+之前结果是失败的用例在这里已经被标记为xfailed了。
+如果参数化的列表是一个空列表，比如参数是某个函数动态生成的，请参考empty_parameter_set_mark选项。
+可以对一个函数使用多个parametrize的装饰器，这样多个装饰器的参数会组合进行调用：
+```
+import pytest
+@pytest.mark.parametrize("x", [0, 1])
+@pytest.mark.parametrize("y", [2, 3])
+def test_foo(x, y):
+    pass
+```
+这会穷举x和y的所有组合并进行调用。
+
+## 13.2 pytest_generate_tests范例
+有时你可能需要自定义或者动态的决定参数。你可以使用在collection期间运行的pytest_generate_tests的钩子。该钩子中你可以使用metafunc对象检查请求的上下文，重要的时，你可以调用metafunc.parametrize()来实现参数化。
+
+如下是个从命令行获取参数化的参数的示例：
+```
+# test_strings.py
+def test_valid_string(stringinput):
+    assert stringinput.isalpha()
+```
+
+```
+# conftest.py
+def pytest_addoption(parser):
+    parser.addoption("--stringinput", action="append", default=[], help="list of stringinputs to pass to test functions")
+
+def pytest_generate_tests(metafunc):
+    if 'stringinput' in metafunc.fixturenames:
+        metafunc.parametrize("stringinput", metafunc.config.getoption('stringinput'))
+```
+如果传入两个string，case会运行两次并且pass：
+```
+$ pytest -q --stringinput="hello" --stringinput="world" test_strings.py
+.. [100%]
+2 passed in 0.12 seconds
+```
+传入一个会导致失败的字符：
+```
+$ pytest -q --stringinput="!" test_strings.py
+F                                                                  [100%]
+================================= FAILURES =================================
+___________________________ test_valid_string[!] ___________________________
+stringinput = '!'
+
+    def test_valid_string(stringinput):
+>       assert stringinput.isalpha()
+E       AssertionError: assert False
+E       + where False = <built-in method isalpha of str object at 0xdeadbeef>()
+E       + where <built-in method isalpha of str object at 0xdeadbeef> = '!'.
+˓→isalpha
+
+test_strings.py:3: AssertionError
+1 failed in 0.12 seconds
+
+```
+如果不指定，那么metafunc.parametrize()会使用一个空的参数列表：
+```
+$ pytest -q -rs test_strings.py
+s                                                                   [100%]
+========================= short test summary info ==========================
+SKIPPED [1] test_strings.py: got empty parameter set ['stringinput'], function test_
+˓→valid_string at $REGENDOC_TMPDIR/test_strings.py:1
+1 skipped in 0.12 seconds
+```
+
+addoption 增加了一个"--stringinput"选项，格式是追加到一个list中，该list会通过metafunc.config.getoption传递给metafunc.parametrize并生成一个名字为"stringinput"的参数，这个参数(fixture?)会提供给test_valid_string使用。
+
+# Chapter 14 缓存：
+2.8引入
+
+## 14.1 用法
+插件提供了两种命令行方式来运行上一次pytest测试失败的用例：
+* --lf, --last-failed 仅重新运行失败的用例
+* --ff, --failed-first 先运行上次失败的用例，然后再运行剩余的其他用例
+
+--cache-clear参数用来在开始一轮新的测试前清理所有的缓存。（通常并不需要这么做）
+其他插件可以通过访问config.cache对象来设置/获取在pytest调用过程中传递的json格式的值。
+***
+注意：这个插件默认是enabled，但是也可以disable掉，参看 Deactivating / unregistering a plugin by name
+***
+## 14.2 重新运行失败的测试或者先运行失败的测试
+我们先来创建一个有50次调用的用例，其中有两次测试是失败的：
+```
+# test_50.py
+import pytest
+
+@pytest.mark.parametrize("i", range(50))
+def test_num(i):
+    if i in (17, 25):
+        pytest.fail("bad luck")
+```
+运行这个测试你会看到两个失败的用例：
+```
+$ pytest -q
+.................F.......F........................ [100%]
+================================= FAILURES =================================
+_______________________________ test_num[17] _______________________________
+
+i = 17
+    @pytest.mark.parametrize("i", range(50))
+    def test_num(i):
+        if i in (17, 25):
+            pytest.fail("bad luck")
+E           Failed: bad luck
+
+test_50.py:6: Failed
+_______________________________ test_num[25] _______________________________
+
+i = 25
+
+    @pytest.mark.parametrize("i", range(50))
+    def test_num(i):
+        if i in (17, 25):
+            pytest.fail("bad luck")
+E           Failed: bad luck
+
+test_50.py:6: Failed
+2 failed, 48 passed in 0.12 seconds
+```
+如果你**再**使用--lf参数来运行：
+```
+$ pytest --lf
+=========================== test session starts ============================
+platform linux -- Python 3.x.y, pytest-4.x.y, py-1.x.y, pluggy-0.x.y
+cachedir: $PYTHON_PREFIX/.pytest_cache
+rootdir: $REGENDOC_TMPDIR, inifile:
+collected 50 items / 48 deselected / 2 selected
+run-last-failure: rerun previous 2 failures
+
+test_50.py FF                        [100%]
+
+================================= FAILURES =================================
+_______________________________ test_num[17] _______________________________
+i = 17
+    @pytest.mark.parametrize("i", range(50))
+    def test_num(i):
+        if i in (17, 25):
+            > pytest.fail("bad luck")
+E           Failed: bad luck
+
+test_50.py:6: Failed
+_______________________________ test_num[25] _______________________________
+i = 25
+    @pytest.mark.parametrize("i", range(50))
+    def test_num(i):
+        if i in (17, 25):
+            > pytest.fail("bad luck")
+E           Failed: bad luck
+
+test_50.py:6: Failed
+================= 2 failed, 48 deselected in 0.12 seconds ==================
+```
+你会发现只有两个失败的用例被重新运行了一次，其他的48个用例并没有被运行（未被选中）。
+现在你再使用--ff选项来运行，所有测试用例都会被运行，而且之前失败的两个用例会首先运行：
+```
+$ pytest --ff
+=========================== test session starts ============================
+platform linux -- Python 3.x.y, pytest-4.x.y, py-1.x.y, pluggy-0.x.y
+cachedir: $PYTHON_PREFIX/.pytest_cache
+rootdir: $REGENDOC_TMPDIR, inifile:
+collected 50 items
+run-last-failure: rerun previous 2 failures first
+test_50.py FF................................................ [100%]
+================================= FAILURES =================================
+_______________________________ test_num[17] _______________________________
+i = 17
+    @pytest.mark.parametrize("i", range(50))
+    def test_num(i):
+        if i in (17, 25):
+            > pytest.fail("bad luck")
+E           Failed: bad luck
+
+test_50.py:6: Failed
+_______________________________ test_num[25] _______________________________
+i = 25
+    @pytest.mark.parametrize("i", range(50))
+    def test_num(i):
+        if i in (17, 25):
+            > pytest.fail("bad luck")
+E           Failed: bad luck
+
+test_50.py:6: Failed
+=================== 2 failed, 48 passed in 0.12 seconds ====================
+```
+另外还有类似的参数--nf，--new-first：首先运行新增/修改的用例，然后再运行已有的用例。所有的用例都会按照修改时间来排序。
+
+## 14.3 前一次没有运行失败的用例时
+当上一次测试没有失败的用例，或者没有缓存数据时，pytest可以配置是否运行所有的用例或者不运行任何用例：
+```
+pytest --last-failed --last-failed-no-failures all #运行所有用例（默认）
+pytest --last-failed --last-failed-no-failures none #不运行任何用例并退出
+```
+
+## 14.4 config.cache对象
+插件或者conftest.py支持代码使用pytest config对象获取一个缓存值。如下是一个简单的例子：
+```
+# test_caching.py
+import pytest
+import time
+
+def expensive_computation():
+    print("running expensive computation...")
+    
+@pytest.fixture
+def mydata(request):
+    val = request.config.cache.get("example/value", None)
+    if val is None:
+        expensive_computation()
+        val = 42
+        request.config.cache.set("example/value", val)
+    return val
+
+def test_function(mydata):
+    assert mydata == 23
+```
+当你第一次运行用例时：
+```
+$ pytest -q
+F [100%]
+================================= FAILURES =================================
+______________________________ test_function _______________________________
+mydata = 42
+    def test_function(mydata):
+        > assert mydata == 23
+E       assert 42 == 23
+E       -42
+E       +23
+
+test_caching.py:17: AssertionError
+-------------------------- Captured stdout setup ---------------------------
+**running expensive computation...**
+1 failed in 0.12 seconds
+```
+当你再次运行时，你会发现expensive_computation中的打印不会再出现了：
+```
+$ pytest -q
+F [100%]
+================================= FAILURES =================================
+______________________________ test_function _______________________________
+mydata = 42
+
+    def test_function(mydata):
+        > assert mydata == 23
+E       assert 42 == 23
+E       -42
+E       +23
+
+test_caching.py:17: AssertionError
+1 failed in 0.12 seconds
+```
+
+## 14.5 查看缓存内容
+你可以通过命令行参数--cache-show来查看缓存内容：
+```
+$ pytest --cache-show
+=========================== test session starts ============================
+platform linux -- Python 3.x.y, pytest-4.x.y, py-1.x.y, pluggy-0.x.y
+cachedir: $PYTHON_PREFIX/.pytest_cache
+rootdir: $REGENDOC_TMPDIR, inifile:
+cachedir: $PYTHON_PREFIX/.pytest_cache
+------------------------------- cache values -------------------------------
+cache/lastfailed contains:
+    {'test_50.py::test_num[17]': True,
+    'test_50.py::test_num[25]': True,
+    'test_assert1.py::test_function': True,
+    'test_assert2.py::test_set_comparison': True,
+    'test_caching.py::test_function': True,
+    'test_foocompare.py::test_compare': True}
+cache/nodeids contains:
+    ['test_caching.py::test_function']
+cache/stepwise contains:
+    []
+example/value contains:
+42
+
+======================= no tests ran in 0.12 seconds =======================
+```
+
+## 14.6 清除缓存
+你可以使用--cache-clear来清理缓存：
+`pytest --cache-clear`
+在那些不希望每次测试之间会可能产生干扰的持续集成服务器上，推荐使用该选项，因为正确性比速度更为重要。
+
+## 14.7 逐步调试
+作为--lf-x的一种替代方法，特别是你预期到你的大部分测试用例都会失败的情况下，使用--sw， --stepwise 允许你每次运行的时候都修复一个用例。测试集将运行到第一个失败的用例，然后自行停止，下一次再调用时，测试集将从上次失败的用例继续运行，然后运行到下一次失败的测试用例再停止。你可以使用--stepwise-skip选项来跳过一个失败的用例，在下一个失败的用例处再停止，如果你一直搞不定当前的失败的用例且只想暂时忽略它，那么这个选项非常有用。
