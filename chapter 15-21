@@ -1,0 +1,612 @@
+# Chapter 15 对unittest.TestCase的支持
+
+pytest支持运行基于python unittest套件的测试。这意味着可以使用pytest来执行当前已经存在的unittest的测试用例，并能够逐步的调整测试套来使用更多的pytest的特性。
+
+想要执行unittest格式的测试用例，使用如下命令行：
+`pytest tests`
+
+pytest会自动的再test_*.py或者*_.test.py文件中去查找unittest.TestCase的子类和他们的测试方法。
+pytest支持几乎所有的unittest的功能：
+* @unittest.skip装饰器
+* setUp/tearDown
+* setUpClass/tearDownClass
+* setupModule/tearDownModule
+pytest还不支持如下功能：
+* load_tests protocol
+* subtests
+
+## 15.1 好处
+大多数测试用例无需修改任何代码即可使用pytest来执行并引入一些新的功能：
+* 更多的tracebacks的信息
+* stdout和stderr的捕获
+* 使用-k和-m的测试选项（参考Test selection options）
+* 在第一（N）次失败后停止运行
+* -pdb的支持
+* 可以通过pytest-xdist插件在多CPU上进行分布式测试
+* 使用简单的assert语句取代了self.assert* 函数
+
+## 15.2 unittes.TestCase子类中的pytest特性
+下列pytest特性在unittest.TestCase的子类中生效：
+* Marks: skip，skipif， xfail；
+* Auto-use fixtures
+
+
+
+不支持下面的pytest的特性，因为设计哲学的不同，应该以后也不会支持：
+* Fixtures
+* Parametrization
+* Custom hooks
+
+第三方插件可能支持也可能不支持，取决于插件和对应的测试套
+
+## 15.3 在unittest.TestCase的子类中使用marks来引用pytest fixtures
+使用pytest允许你使用fixture来运行unittest.TestCase风格的测试。
+下面是一个示例：
+```
+# conftest.py
+# 下面定义了一个fixture，可以通过名字来引用该fixture
+
+import pytest
+
+@pytest.fixture(scope="class")
+def db_class(request):
+    class DummyDB(object):
+        pass
+
+    request.cls.db = DummyDB()
+```
+这个fixture会在class里创建一个DummyDB的实例并赋值给类中的db属性。fixture通过传入一个特殊的可以访问调用该fixture的测试用例上下文（比如测试用例的cls属性）的request对象来实现。该架构可以使得fixture与测试用例解耦，并允许通过使用fixture名称这种最小引用来使用fixture。
+下面开始在unittest.TestCase中使用该fixture：
+```
+# test_unittest_db.py
+
+import unittest
+import pytest
+
+@pytest.mark.usefixtures("db_class")
+class MyTest(unittest.TestCase):
+    def test_method1(self):
+        assert hasattr(self, "db")
+        assert 0, self.db   # 测试目的
+
+    def test_method2(self):
+        assert 0, self.db   # 测试目的
+```
+
+类装饰器@pytest.mark.usefixtures("db_class")保证了pytest的fixture函数db_class在每个类中只会被调用一次。由于故意放置的导致失败的断言语句，我们可以在traceback中看到self.db的值：
+```
+$ pytest test_unittest_db.py
+=========================== test session starts ============================
+platform linux -- Python 3.x.y, pytest-4.x.y, py-1.x.y, pluggy-0.x.y
+cachedir: $PYTHON_PREFIX/.pytest_cache
+rootdir: $REGENDOC_TMPDIR, inifile:
+collected 2 items
+
+test_unittest_db.py FF                                               [100%]
+
+================================= FAILURES =================================
+___________________________ MyTest.test_method1 ____________________________
+
+self = <test_unittest_db.MyTest testMethod=test_method1>
+
+    def test_method1(self):
+        assert hasattr(self, "db")
+>       assert 0, self.db # fail for demo purposes
+E       AssertionError: <conftest.db_class.<locals>.DummyDB object at 0xdeadbeef>
+E       assert 0
+
+test_unittest_db.py:9: AssertionError
+___________________________ MyTest.test_method2 ____________________________
+
+self = <test_unittest_db.MyTest testMethod=test_method2>
+
+    def test_method2(self):
+>       assert 0, self.db # fail for demo purposes
+E       AssertionError: <conftest.db_class.<locals>.DummyDB object at 0xdeadbeef>
+E       assert 0
+
+test_unittest_db.py:12: AssertionError
+========================= 2 failed in 0.12 seconds =========================
+
+```
+通过默认的traceback可以看到这两个测试函数共享了一个self.db的实例，与我们定义fixture为class的预期行为一致。
+
+## 15.4 自动调用的fixtures以及访问其他fixtures
+通常最好是在你需要使用的fixtures的测试用例中显式的声明使用哪些fixtures，但是有时你可能希望在某些特定的上下文中自动调用一些fixtures。 毕竟传统的unittest的风格中允许这种隐式的调用，你可能已经习惯这种风格了。
+你可以使用@pytest.fixture(autouse=True)来标记fiture，并且在你需要使用的地方对其进行定义。
+我们来看一个例子，一个名为initdir的fixture，该fixture可以使所有TestCase的类在一个临时文件夹中执行，并在执行前初始化samplefile.ini。initdir使用pytest内置的fixture：tmpdir来为每个测试用例创建临时文件夹。
+```
+# test_unittest_cleandir.py
+import pytest
+import unittest
+
+class MyTest(unittest.TestCase):
+
+    @pytest.fixture(autouse=True)
+    def initdir(self, tmpdir):
+        tmpdir.chdir()
+        tmdir.join("samplefile.ini").write("# testdata")
+
+    def test_method(self):
+        with open("samplefile.ini") as f:
+            s = f.read()
+
+        assert "testdata" in s
+```
+
+因为initdir被标记为了autouse，所以该class下的所有的测试用例都会自动的调用initdir，就像定义了 @pytest.mark.usefixtures("initdir")一样。
+运行结果如下：
+```
+$ pytest -q test_unittest_cleandir.py
+.                                                       [100%]
+1 passed in 0.12 seconds
+
+```
+可以看到测试结果是pass的，因为initdir这个fixture在执行test_method之前已经被调用了。
+***
+*注意*：unittest.TestCase不能直接使用fixture作为入参，因为这可能导致unittest.TestCase运行的某些异常。使用上面示例中的usefixture和autouse的方式可以将pytest的fixture使用到已有的unittest用例中，然后逐步的将unittest.TestCase的用例转化成pytest中的断言风格的测试用例。
+***
+
+# Chapter 16 运行nose的测试用例（没用过nose。。跳过）
+
+# Chapter 17 经典的xunit-style
+本章描述了一种实现fixtures经典且流行的方式。
+***注意在unittest和nose中的不同***
+
+## 17.1 模块级的setup/teardown
+如果你在某个module中有多个测试用例/测试类，你可以选择实现下面的fixtures函数，这些函数只会在测试该模块中的所有函数中只被调用一次：
+```
+def setup_module(module):
+    '''在模块开始执行前，任何特定的需要在该模块中执行的内容'''
+
+def teardown_module(module):
+    '''在模块退出执行前，任何特定的需要在该模块中执行的内容'''
+```
+在pytest3.0中，module这个参数是可选的。
+
+## 17.2 class级的setup/teardown
+同样的下面的方法在进入class和退出class的测试用例时会被调用一次：
+```
+@classmethod
+def setup_class(cls):
+    '''在class开始执行前，任何特定的需要在该class中执行的内容'''
+
+@classmethod
+def teardown_class(cls):
+    '''在class退出执行前，任何特定的需要在该class中执行的内容'''
+```
+
+## 17.3 函数级别的setup/teardown
+下面的方法会在每个测试函数的进入和退出时调用：
+```
+def setup_method(self, method):
+    '''在method开始执行前，任何特定的需要在该method中执行的内容'''
+
+def teardown_method(self, method):
+    '''在method退出执行前，任何特定的需要在该method中执行的内容'''
+```
+在pytest3.0中，method这个参数是可选的。
+
+如果你想直接在module里定义，可以使用下面的方式：
+```
+def setup_function(function):
+    '''在function开始执行前，任何特定的需要在该function中执行的内容'''
+
+def teardown_function(function):
+    '''在function退出执行前，任何特定的需要在该function中执行的内容'''
+```
+在pytest3.0中，function这个参数是可选的。
+
+注意事项：
+* setup/teardown可以在测试进程中被多次调用
+* 如果setup失败或者被跳过了，那么teardown也不会被调用
+* pytest4.2之前，xunit-style没有严格的执行fixtures的scope的调用顺序，比如setup-method可能会在一个session作用域的自动使用的fixture前就被调用
+现在这种scope的问题已经被解决。
+
+# Chapter 18 安装和使用插件
+
+本章讨论如何安装和使用第三方插件。
+可以使用pip很容易的安装第三方插件：
+```
+pip install pytest-NAME
+pip uninstall pytest-NAME
+```
+
+安装插件后，pytest可以自动集成，不需要再次激活。
+下面是一些流行的pytest插件（懒得翻译了。。。囧）：
+* pytest-django: write tests for django apps, using pytest integration.
+* pytest-twisted: write tests for twisted apps, starting a reactor and processing deferreds from test functions.
+* pytest-cov: coverage reporting, compatible with distributed testing
+* pytest-xdist: to distribute tests to CPUs and remote hosts, to run in boxed mode which allows to survive segmentation faults, to run in looponfailing mode, automatically re-running failing tests on file changes.
+* pytest-instafail: to report failures while the test run is happening.
+* pytest-bdd and pytest-konira to write tests using behaviour-driven testing.
+* pytest-timeout: to timeout tests based on function marks or global definitions.
+* pytest-pep8: a --pep8 option to enable PEP8 compliance checking.
+* pytest-flakes: check source code with pyflakes.
+* oejskit: a plugin to run javascript unittests in live browsers.
+在http://plugincompat.herokuapp.com/中可以查看不同的插件对于不同的python及pytest的版本的兼容性。
+还可以在https://pypi.org/search/?q=pytest- 查找更多的插件。
+
+## 18.1 在module或者conftest文件中请求/加载插件
+可以在module或者conftest中使用下面的方式加载插件，当module或者conftest被加载时，该插件也会被加载：
+`pytest_plugins = ("myapp.testsupport.myplugin",)`
+***
+注意： 不推荐在非根目录的conftest.py中调用pytest_plugins。具体原因见下一章。
+注意： pytest_plugins是保留字，不应该在自定义插件中使用该保留字。
+***
+
+## 18.2 查看被激活的插件
+使用 pytest --trace-config 查看当前环境哪些插件被激活了。
+
+## 18.3 通过插件名去激活
+你可以通过下面的方式禁用某些插件：
+`pytest -p no:NAME`
+这表示任何尝试激活/加载NAME的插件都不会生效。
+如果你想无条件的在项目中禁用某个插件，你可以在pytest.ini中添加如下选项：
+```
+[pytest]
+addopts = -p no:NAME
+```
+如果仅想在某些特定的环境下禁用（比如CI服务器），你可以配置PYTEST_ADDOPTS这个环境变量为-p no：NAME。
+
+# Chapter 19 自定义插件
+
+一个插件包含一个或者多个钩子函数。下一章详细描述了如何自定义一个钩子函数。pytest针对configuration/collection/running/reporting实现了如下插件：
+* 内置插件： 从pytest的内部目录_pytest加载
+* 外部插件： 通过setuptools安装的外部插件
+* conftest.py插件： 在测试目录下可以被自动加载的插件
+理论上，每个钩子函数都可以定义N个python函数。这里的N指的是按照规范定义的钩子函数（也就是钩子函数可以用同一个函数名称定义多个）。 所有的规范的测试函数都以pytest_作为前缀，很容易通过函数名识别出来。
+
+## 19.1 插件的加载顺序
+pytest加载插件的顺序如下：
+* 加载所有内置插件
+* 加载所有通过setup tools安装的外部插件
+* 加载通过命令行参数-p name指定的插件
+* 加载conftest.py，如果没有指定测试目录，以当前目录作为测试目录，如果指定了测试目录，加载所有conftest.py以及test*/conftest.py
+* 加载conftest.py中由变量pyetst_plugins指定的插件
+
+## 19.2 conftest.py： 本地文件夹指定的插件
+conftest.py插件包含了为本目录实现的钩子函数。测试用例只会加载那些为本目录定义的conftest.py里所定义的钩子。
+如下pytest_runtest_setup钩子只有a目录下的测试函数会调用，其他目录的函数则不会使用该钩子
+```
+a/conftest.py:
+    def pytest_runtest_setup(item):
+        print("setting up", item)
+
+a/test_sub.py:
+    def test_sub():
+        pass
+
+test_flat.py:
+    def test_flat():
+        pass
+```
+你可以按照如下方式来运行：
+```
+pytest test_flat.py --capture=no #不会显示"setting up"
+pytest a/test_sub.py --capture=no #会显示"setting up"
+```
+
+## 19.3 自定义插件
+你可以参考下面的例子来实现自定义插件：
+* 一个自定义的collection插件： 参考chapter 27.7
+* pytest的内置插件
+* pytest的外部插件
+这些插件都实现了钩子函数，或者一些fixtrues来扩展功能。
+
+## 19.4 让其他用户可以安装你的插件
+
+如果你想要你的插件可以分享给其他人安装，你需要在setup.py中定义一个所谓的切入点以便pytest找到你的插件。切入点时setuptools提供的一个功能。 
+在下面的例子中，为pytest定义了pytest11这个切入点，这样你就可以在你的项目中使用该插件了：
+```
+# setup.py
+from setuptools import setup
+
+setup(
+    name="myproject",
+    packages=["myproject"],
+    entry_points={"pytest11":["name_of_plugin = myproject.pluginmodule"]},
+    classifiers=["Frameword :: Pytest"]
+)
+```
+如果使用了该方式安装，pytest会安装myproject.pluginmodule插件。
+***
+注意： 确保包含了"Frameword :: Pytest"这个分类器，这可以让用户更方便的找到你的插件。
+***
+
+## 19.5 重写断言
+烦躁
+
+## 19.6 在module或者conftest文件中加载插件
+你可以在module或者conftest中加载插件：
+`pytest_plugins = ["name1", "name2"]`
+当module或者conftest被加载时，该插件也会被加载(跟18.1有啥区别？)。所有module都可以被作为一个插件来进行加载，包括内部module：
+`pytest_plugins = "myapp.testsupport.myplugin"`
+pytest_plugins是递归调用的，如果上面的例子中的myapp.testsupport.myplugin也定义了pytest_plugins， 其中所定义的上下文也会被加载为插件。
+***
+注意： 不推荐在非根目录的conftest.py中调用pytest_plugins。
+conftest.py虽然是为每个目录定义的文件，但是一旦插件被导入，那么该插件会在所有的目录中生效。为了避免混淆，在非根目录的conftest.py定义pytest_plugins是不推荐的，并且会抛出一条告警信息。
+***
+
+## 19.7 通过插件名访问
+如果你要在插件中使用另外一个插件的代码，你可以通过下面的方式来引用：
+`plugin = config.pluginmanager.get_plugin("name_of_plugin")`
+使用--trace-config可以查看已经存在的插件。
+
+## 19.8 测试插件
+pytest通过一个名为pytester的插件来测试插件，这个插件默认是disable的，你需要在使用前enable。
+你可以在conftest.py中添加下面的代码来enable该插件
+```
+# conftest.py
+
+pytest_plugins = ["pytester"]
+```
+你也可以通过传入命令行参数-p pytester来enable。
+
+我们来通过下面的例子来展示你可以通过这个插件做哪些事。
+假设我们实现了一个插件，包含一个名为hello的fixture，该fixture会返回一个“Hello World！”的字符串：
+```
+# -*- coding: utf-8 -*-
+
+import pytest
+
+def pytest_addoption(parser):
+    group = parser.getgroup("helloworld")
+    group.addoption(
+        "--name",
+        action="store",
+        dest="name",
+        default="World",
+        help='Default "name" for hello().',
+    )
+
+@pytest.fixture
+def hello(request):
+    name = request.config.getoption("name")
+
+    def _hello(name=None):
+        if not name:
+            name = request.config.getoption("name")
+
+        return _hello
+```
+现在我们就可以使用testdir提供的API来创建一个临时的conftest.py和测试文件，这些临时文件可以用来运行测试用例并返回结果，可以用来检查测试的输出是否符合预期
+```
+def test_hello(testdir):
+    """确保插件是正常工作的"""
+
+    # 创建临时文件conftest.py
+    testdir.makeconftest(
+        """
+        import pytest
+
+        @pytest.fixture(params=["Brianna", "Andreas", "Floris",])
+        def name(request):
+            return request.param
+        """
+    )
+
+    # 创建临时的测试文件
+    testdir.makepyfile(
+        """
+        def test_hello_default(hello):
+            assert hello() == "Hello World!"
+
+        def test_hello_name(hello, name):
+            assert hello(name) == "Hello {0}!".format(name)
+        """
+    )
+
+    result = testdir.runpytest()
+    result.assert_outcomes(pass=4)
+```
+
+
+# Chapter 20 编写钩子函数
+
+## 20.1 钩子函数的验证和执行
+pytest的钩子函数定义在插件中。我们来看一个典型的钩子函数pytest_collection_modifyitems(session, config, items)，该钩子函数会在pytest完成测试对象的collection之后调用。
+当我们在插件中定义pytest_collection_modifyitems时，pytest会在注册阶段检查参数名是否符合要求，如果不匹配，则会退出。
+
+下面是一个示例：
+```
+def pytest_collection_modifyitems(config, items):
+    #在collection完成后调用，可以在这里修改“items”
+```
+
+这里，pytest使用了config（pytest配置项）以及items（待测试对象）作为入参，没有使用session。这种动态的参数“删减”使得pytest是可以做到“将来兼容”。我们可以引入新的钩子参数，而不破坏现有的钩子实现的原型，这也是pytest插件可以做到长期兼容的原因之一。
+
+注意钩子函数不允许抛出异常，如果在钩子函数中抛出异常，会使得pytest的运行中断。
+
+## 20.2 firstresult：在第一个非None结果的用例终止
+pytest的钩子函数都有一个列表，其中是该钩子函数的所有的非None的结果（这句感觉怪怪的，感觉意思是钩子都存在一个列表里，然后pytest会顺着这个列表调用同名的钩子函数。。。）。
+
+一些钩子定义了first result=true选项，这样钩子在调用时只会执行到注册的N个钩子函数中的第一个返回非None结果的钩子，然后用该非None的结果作为整个钩子调用的结果返回。这种情况下，剩下的钩子函数不会再被调用。
+
+## 20.3 hookwrapper：在钩子的上下文执行
+2.7引入
+pytest插件允许对钩子进行包装。钩子的包装函数是一个生成器并且只会yield一次。当pytest调用钩子的时候首先会调用钩子的包装函数并且将传给钩子的参数也传递给该包装函数。
+
+在yield处，pytest会执行钩子函数并且将结果返回给yield。
+
+下面是包装函数的一个示例：
+```
+import pytest
+
+@pytest.hook.impl(hookwrapper=True)
+def pytest_pyfunc_call(pyfuncitem):
+    do_something_before_next_hook_executes()
+
+    outcome = yield
+
+    res = outcome.get_result()
+    post_process_result(res)
+    outcome.force_result(new_res)
+```
+注意，钩子包装器本身并不返回结果，它们只是围绕钩子做一些跟踪处理。如果底层钩子的结果是一个可变的对象，那么包装器可以修改该结果，但最好避免这样做。
+
+## 20.4 钩子函数的排序/调用示例
+任意的钩子函数都可能不止一个实现，通常我们可以看到钩子函数被执行了N次，这里的N次就是注册的同名的N个钩子函数。 通过调整这N个钩子函数的位置，可以影响钩子函数的调用过程：
+```
+# Plugin 1
+@pytest.hookimpl(tryfirst=True)
+def pytest_collection_modifyitems(items):
+    # 会尽早执行
+    ...
+
+# Plugin 2
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(items):
+    # 会尽可能晚的执行
+    ...
+
+# Plugin 3
+@pytest.hookimpl(hookwrapper=True)
+def pytest_collection_modifyitems(items):
+    # 会在tryfirst之前执行
+    outcome = yield
+    # 会在所有非hookwrappers之后执行
+```
+下面是执行顺序：
+1. 调用Plugin 3的pytest_collection_modifyitems直到yield
+2. 调用Plugin 1的pytest_collection_modifyitems
+3. 调用Plugin 2的pytest_collection_modifyitems
+4. 调用Plugin 3的pytest_collection_modifyitems的yield之后的代码
+
+## 20.5 定义新的钩子
+
+插件和conftest.py可能会定义一些新的钩子来改变一些pytest的行为或者与其他的插件进行交互：
+pytest_addhooks(pluginmanager)
+    在插件注册阶段来添加一个新的钩子函数：pluginmanager.add_hookspecs(module_or_class, prefix)
+
+    注意这个钩子与hookwrapper=True不兼容
+定义的新的钩子一般是一个空函数，仅包含一些文档注释来描述这个钩子应该什么时候被调用，期望返回值是什么。
+
+## 20.6 。。。
+
+# Chapter 21 日志
+3.3 引入， 3.4更新
+
+pytest默认捕获WARNING或以上级别的log并在测试结束后输出：
+使用pytest不带参数运行：
+`pytest`
+显示失败的用例：
+```
+----------------------- Captured stdlog call ----------------------
+test_reporting.py 26 WARNING text going to logger
+----------------------- Captured stdout call ----------------------
+text going to stdout
+----------------------- Captured stderr call ----------------------
+text going to stderr
+==================== 2 failed in 0.02 seconds =====================
+```
+
+如果要格式化日志和时间，使用下面的格式化参数来指定：
+`pytest --log-format="%(asctime)s %(levelname)s %(message)s" --log-date-format="%Y-%m-%d %H:%M:%S"`
+显示失败的测试用例的格式如下：
+```----------------------- Captured stdlog call ----------------------
+2010-04-10 14:48:44 WARNING text going to logger
+----------------------- Captured stdout call ----------------------
+text going to stdout
+----------------------- Captured stderr call ----------------------
+text going to stderr
+==================== 2 failed in 0.02 seconds =====================
+```
+也可以在pytest.ini文件中指定：
+```
+[pytest]
+log_format = %(asctime)s %(levelname)s %(message)s
+log_date_format = %Y-%m-%d %H:%M:%S
+```
+甚至可以禁止掉失败用例的所有输出（stdout，stderr以及logs）：
+`pytest --show-capture=no`
+
+## 21.1 fixture: caplog
+通过caplog可以改变测试用例内部的log的级别：
+```
+def test_foo(caplog):
+    caplog.set_level(logging.INFO)
+    pass
+```
+默认是设置的root logger，但是也可以通过参数指定：
+```
+def test_foo(caplog):
+    caplog.set_level(logging.CRITICAL, logger='root.baz')
+    pass
+```
+log的level会在测试结束后自动恢复。
+
+也可以在with代码块中通过上下文管理器临时改变log的level
+```
+def test_bar(caplog):
+    with caplog.at_level(logging.INFO):
+        pass
+```
+同样，可以通过参数指定logger：
+```
+def test_bar(caplog):
+    with caplog.at_level(logging.CRITICAL, logger='root.baz'):
+        pass
+```
+最后，在测试运行期间发送给logger的所有日志都可以在fixture使用，包括logging.logrecord实例和最终日志文本。当您希望对消息的内容进行断言时，此选项非常有用：
+```
+def test_baz(caplog):
+    func_under_test()
+    for record in caplog.records:
+        assert record.levelname != 'CRITICAL'
+    assert 'wally' not in caplog.text
+```
+其他的属性可以参考logging.Logrecord类。
+
+你可以使用record_tuples来保证消息使用给定的紧急级别进行记录的：
+```
+def test_foo(caplog):
+    logging.getLogger().info('boo %s', 'arg')
+
+    assert caplog.record_tuples == [('root', logging.INFO, 'boo arg')]
+```
+使用caplog.clear()来重置捕获的日志：
+```
+def test_something_with_clearing_records(caplog):
+    some_method_that_creates_log_records()
+    caplog.clear()
+    your_test_method()
+    assert ['Foo'] == [rec.message for rec in caplog.records]
+```
+caplog.records只包含当前阶段的信息，所以在setup阶段这里只会有setup的信息，call和teardown也一样。
+可以通过caplog.get_records(when)来获取测试过程中其他阶段的log。下面这个例子，在teardown中检查了setup和call阶段的log来确保在使用某些fixtures的时候没有任何告警：
+```
+@pytest.fixture
+def window(caplog):
+    window = create_window()
+    yield window
+    for when in ("setup", "call"):
+        messages = [
+            x.message for x in caplog.get_records(when) if x.level == logging.WARNING
+        ]
+        if messages:
+            pytest.fail("warning messages encountered during testing: {}".format(messages))
+```
+
+## 21.2 实时log
+设置log_cli为true，pytest会将log直接在控制台输出。
+使用--log-cli-level可以设置在控制台输出的log的level，该设置可以用level的名称或者是代表level的数字。
+另外，也可以通过--log-cli-format和--log-cli-data-format指定格式，如果没有指定，则使用的是默认值--log-format和--log-date-format，这些只对控制台生效（废话，带cli）
+所有的cli的配置项都可以在ini中配置，配置项名为：
+* log_cli_level
+* log_cli_format
+* log_cli_date_format
+
+如果想要将所有log记录到某个文件，使用--log-file=/path/to/log/flie这种方式。
+也可以使用--log-file-level指定写入到log文件的log的level。
+另外，也可以通过--log-file-format和--log-file-data-format指定格式，如果没有指定，则使用的是默认值--log-format和--log-date-format（跟控制台是一样的用法）
+所有的log文件的配置项都可以在ini中配置，配置项名为：
+* log_file
+* log_file_level
+* log_file_format
+* log_file_date_format
+
+## 21.3
+## 21.4
+
+
